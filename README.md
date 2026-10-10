@@ -310,6 +310,8 @@ DataPuddle --serve --read-only           # readers only
 DataPuddle --serve --listen http://127.0.0.1:6000
 ```
 
+With `-i` as well (`DataPuddle -i --serve`), the server runs while you use the shell, and stops when you leave it. The shell and the API take turns using the local copy: a shell command waits for an API request in progress, and an API request waits (up to `Api:LockWaitSeconds`) for a shell command. While the API runs, SQL typed in the shell is under the same [file-access limits](#files-and-safety) as API SQL, unless `Api:AllowFileAccess` is true; add folders you import from to `Api:AllowedDirectories`.
+
 When the server is up, open `http://127.0.0.1:5080/swagger` for interactive documentation. The pipeline's `OnSuccess` and `OnError` actions run as soon as the server is listening (not when it stops), so a webhook or program they start can call the API straight away. If the startup clones or the pipeline failed, the API is not started.
 
 ### Settings

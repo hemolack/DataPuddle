@@ -344,15 +344,13 @@ internal static class Program {
                 summary.DurationSeconds = Math.Round(runWatch.Elapsed.TotalSeconds, 3);
             }
 
-            if (interactive && !startupFailed) {
-                PuddleShell.Run(copier);
-            }
-
+            RunningApi? api = null;
+            ApiServices? services = null;
             if (serve && apiOptions != null) {
                 if (startupFailed || !pipelineSucceeded || !allMatch) {
                     Console.Error.WriteLine("The API was not started because the startup clones or the pipeline failed.");
                 } else {
-                    ApiServices services = new ApiServices(
+                    services = new ApiServices(
                         copier,
                         new DatabaseGate(copier, apiOptions),
                         apiOptions,
@@ -371,10 +369,24 @@ internal static class Program {
 
                     // The server keeps the database open, so the summary and actions fire once it is listening.
                     // That lets a webhook or program started by an action call the API back.
-                    ApiServer.Run(services, () => {
+                    api = ApiServer.Start(services, interactive, () => {
                         exitCode = CompleteRun();
                         completed = true;
                     });
+                }
+            }
+
+            try {
+                if (interactive && !startupFailed) {
+                    // With the API running, the shell takes the database for each command so the two never overlap.
+                    PuddleShell.Run(copier, services != null ? services.Gate.Acquire : null);
+                } else if (api != null) {
+                    api.WaitForShutdown();
+                }
+            } finally {
+                if (api != null) {
+                    api.Stop();
+                    api.Dispose();
                 }
             }
         }

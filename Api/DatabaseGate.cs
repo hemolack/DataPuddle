@@ -52,6 +52,28 @@ public sealed class DatabaseGate : IDisposable {
         }
     }
 
+    /// <summary>
+    /// Takes the database for the caller's own use, waiting as long as it takes. The interactive shell uses this
+    /// around each command so it never runs at the same moment as an API request. Dispose the result to let API requests in.
+    /// </summary>
+    public IDisposable Acquire() {
+        _lock.Wait();
+        return new Releaser(_lock);
+    }
+
+    private sealed class Releaser : IDisposable {
+        private SemaphoreSlim? _held;
+
+        public Releaser(SemaphoreSlim held) {
+            _held = held;
+        }
+
+        public void Dispose() {
+            _held?.Release();
+            _held = null;
+        }
+    }
+
     public void Dispose() {
         _lock.Dispose();
     }

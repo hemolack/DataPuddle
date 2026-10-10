@@ -12,7 +12,11 @@ public static class PuddleShell {
     private const int MaxDisplayRows = 1000;
     private const int MaxColumnWidth = 60;
 
-    public static void Run(LocalStore store) {
+    /// <summary>
+    /// Runs the interactive shell. When the REST API is running alongside it, <paramref name="acquireLock"/> takes
+    /// the database for the duration of each command, so shell commands and API requests never overlap.
+    /// </summary>
+    public static void Run(LocalStore store, Func<IDisposable>? acquireLock = null) {
         DuckDBConnection duck = store.Connection;
         Console.WriteLine("╔════════════════════════════════════════════════╗");
         Console.WriteLine("║      01000100 01100001 01110100 01100001       ║");
@@ -34,17 +38,25 @@ public static class PuddleShell {
 
             string trimmed = line.Trim();
             if (buffer.Length == 0 && IsCommand(trimmed, CloneKeyword)) {
-                RunClone(store, trimmed);
+                using (acquireLock?.Invoke()) {
+                    RunClone(store, trimmed);
+                }
                 continue;
             }
 
             if (buffer.Length == 0 && IsCommand(trimmed, ExportKeyword)) {
-                RunExport(store, trimmed);
+                using (acquireLock?.Invoke()) {
+                    RunExport(store, trimmed);
+                }
                 continue;
             }
 
             if (buffer.Length == 0 && trimmed.StartsWith('.')) {
-                if (!HandleDotCommand(duck, trimmed)) {
+                bool keepGoing;
+                using (acquireLock?.Invoke()) {
+                    keepGoing = HandleDotCommand(duck, trimmed);
+                }
+                if (!keepGoing) {
                     break;
                 }
                 continue;
@@ -58,19 +70,21 @@ public static class PuddleShell {
             if (trimmed.EndsWith(';')) {
                 string sqlText = buffer.ToString();
                 buffer.Clear();
-                try {
-                    string translated;
-                    string? schemaToCreate;
-                    if (SelectIntoTranslator.TryTranslate(sqlText, out translated, out schemaToCreate)) {
-                        Console.WriteLine("-- translated to: " + translated.Trim());
-                        if (schemaToCreate != null) {
-                            store.Execute("CREATE SCHEMA IF NOT EXISTS \"" + schemaToCreate.Replace("\"", "\"\"") + "\"");
+                using (acquireLock?.Invoke()) {
+                    try {
+                        string translated;
+                        string? schemaToCreate;
+                        if (SelectIntoTranslator.TryTranslate(sqlText, out translated, out schemaToCreate)) {
+                            Console.WriteLine("-- translated to: " + translated.Trim());
+                            if (schemaToCreate != null) {
+                                store.Execute("CREATE SCHEMA IF NOT EXISTS \"" + schemaToCreate.Replace("\"", "\"\"") + "\"");
+                            }
+                            sqlText = translated;
                         }
-                        sqlText = translated;
+                        ExecuteAndPrint(duck, sqlText);
+                    } catch (Exception ex) {
+                        Console.Error.WriteLine("Error: " + ex.Message);
                     }
-                    ExecuteAndPrint(duck, sqlText);
-                } catch (Exception ex) {
-                    Console.Error.WriteLine("Error: " + ex.Message);
                 }
             }
         }

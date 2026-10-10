@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
@@ -15,32 +16,28 @@ using Microsoft.OpenApi.Models;
 namespace DataPuddle.Api;
 
 /// <summary>Builds and runs the REST API on top of an open <see cref="LocalStore"/>.</summary>
-public static class ApiServer
-{
+public static class ApiServer {
     private const string SqlHashItem = "dp.sqlHash";
 
     /// <summary>Records a short fingerprint of a SQL statement for the audit log (never the SQL itself).</summary>
-    public static void NoteSql(HttpContext context, string sql)
-    {
+    public static void NoteSql(HttpContext context, string sql) {
         byte[] hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sql));
         context.Items[SqlHashItem] = Convert.ToHexString(hash, 0, 6).ToLowerInvariant();
     }
 
     /// <summary>
-    /// Starts listening and blocks until the server is stopped (Ctrl+C, or POST /shutdown).
-    /// <paramref name="onStarted"/> runs once the server is accepting requests.
+    /// Starts listening and returns while the server keeps running in the background.
+    /// <paramref name="onStarted"/> runs once the server is accepting requests. With
+    /// <paramref name="interactive"/> the server does not take over Ctrl+C, so the interactive shell keeps it.
     /// </summary>
-    public static void Run(ApiServices services, Action? onStarted)
-    {
+    public static RunningApi Start(ApiServices services, bool interactive, Action? onStarted) {
         ApiOptions options = services.Options;
 
-        if (!options.AllowFileAccess)
-        {
+        if (!options.AllowFileAccess) {
             services.Store.RestrictFileAccess(options.AllowedDirectories);
         }
 
-        WebApplicationBuilder builder = WebApplication.CreateBuilder(new WebApplicationOptions
-        {
+        WebApplicationBuilder builder = WebApplication.CreateBuilder(new WebApplicationOptions {
             ContentRootPath = AppContext.BaseDirectory
         });
         builder.Logging.ClearProviders();
@@ -53,16 +50,17 @@ public static class ApiServer
         });
 
         builder.Services.AddSingleton(services);
+        if (interactive) {
+            builder.Services.Replace(ServiceDescriptor.Singleton<IHostLifetime, DetachedLifetime>());
+        }
         builder.Services.AddEndpointsApiExplorer();
         builder.Services.AddSwaggerGen(swagger => {
-            swagger.SwaggerDoc("v1", new OpenApiInfo
-            {
+            swagger.SwaggerDoc("v1", new OpenApiInfo {
                 Title = "DataPuddle API",
                 Version = "v1",
                 Description = "Read and write the local copy of the data. Send your key as the X-Api-Key header."
             });
-            swagger.AddSecurityDefinition("ApiKey", new OpenApiSecurityScheme
-            {
+            swagger.AddSecurityDefinition("ApiKey", new OpenApiSecurityScheme {
                 Type = SecuritySchemeType.ApiKey,
                 In = ParameterLocation.Header,
                 Name = "X-Api-Key",
@@ -97,94 +95,82 @@ public static class ApiServer
         IHostApplicationLifetime lifetime = app.Lifetime;
         lifetime.ApplicationStarted.Register(() => {
             Console.WriteLine("API is accepting requests.");
-            if (onStarted != null)
-            {
-                try
-                {
+            if (onStarted != null) {
+                try {
                     onStarted();
-                }
-                catch (Exception ex)
-                {
+                } catch (Exception ex) {
                     Console.Error.WriteLine("Startup actions failed: " + ex.Message);
                 }
             }
         });
 
         // Printed before the server starts, so the key is visible even if the server then fails to start.
-        PrintBanner(services);
-        app.Run();
+        PrintBanner(services, interactive);
+        app.Start();
+        return new RunningApi(app);
     }
 
-    private static void PrintBanner(ApiServices services)
-    {
+    private static void PrintBanner(ApiServices services, bool interactive) {
         ApiOptions options = services.Options;
         Console.WriteLine();
         Console.WriteLine($"Starting the API on {options.Listen}  (docs at {options.Listen.TrimEnd('/')}/swagger)");
         Console.WriteLine(options.ReadOnly
             ? "Mode: read-only (data and files cannot be changed through the API)."
             : "Mode: read and write.");
-        if (options.Queries.Count > 0)
-        {
+        if (options.Queries.Count > 0) {
             Console.WriteLine($"Named queries: {options.Queries.Count} (GET /queries)");
         }
-        if (options.KeyWasGenerated)
-        {
+        if (options.KeyWasGenerated) {
             Console.WriteLine("No Api:Key is set, so a key was made up for this run:");
             Console.WriteLine("  " + options.Keys[0].Secret);
             Console.WriteLine("Set Api:Key (or the Api__Key environment variable) to use the same key every time.");
         }
-        if (options.AllowFileAccess)
-        {
+        if (options.AllowFileAccess) {
             Console.WriteLine("WARNING: Api:AllowFileAccess is on, so SQL sent to the API can read and write any file this program can.");
         }
-        if (services.Audit.FilePath != null)
-        {
+        if (services.Audit.FilePath != null) {
             Console.WriteLine("Audit log: " + services.Audit.FilePath);
         }
-        if (Uri.TryCreate(options.Listen, UriKind.Absolute, out Uri? uri) && !IsLoopback(uri.Host) && uri.Scheme == Uri.UriSchemeHttp)
-        {
+        if (Uri.TryCreate(options.Listen, UriKind.Absolute, out Uri? uri) && !IsLoopback(uri.Host) && uri.Scheme == Uri.UriSchemeHttp) {
             Console.WriteLine("WARNING: this address is reachable from other computers over plain http, so the key travels unencrypted. " +
                 "Use https, or a loopback address (127.0.0.1) behind a reverse proxy.");
         }
-        Console.WriteLine("Press Ctrl+C to stop.");
+        if (!options.AllowFileAccess) {
+            Console.WriteLine("File access is restricted to the output folder and Api:AllowedDirectories while the API runs; that includes SQL typed in the shell.");
+        }
+        Console.WriteLine(interactive
+            ? "The API stops when you leave the shell."
+            : "Press Ctrl+C to stop.");
     }
 
-    private static bool IsLoopback(string host)
-    {
-        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase))
-        {
+    private static bool IsLoopback(string host) {
+        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)) {
             return true;
         }
         return IPAddress.TryParse(host.Trim('[', ']'), out IPAddress? address) && IPAddress.IsLoopback(address);
     }
 
-    private static bool IsOpenPath(PathString path)
-    {
+    private static bool IsOpenPath(PathString path) {
         return path == "/" || path == "/health" || path.StartsWithSegments("/swagger");
     }
 
-    private static async Task AuthenticateAsync(HttpContext context, RequestDelegate next, ApiServices services)
-    {
-        if (IsOpenPath(context.Request.Path))
-        {
+    private static async Task AuthenticateAsync(HttpContext context, RequestDelegate next, ApiServices services) {
+        if (IsOpenPath(context.Request.Path)) {
             await next(context);
             return;
         }
 
         string? presented = context.Request.Headers["X-Api-Key"].ToString();
-        if (string.IsNullOrEmpty(presented))
-        {
+        if (string.IsNullOrEmpty(presented)) {
             string authorization = context.Request.Headers.Authorization.ToString();
             const string prefix = "Bearer ";
-            if (authorization.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            {
+            if (authorization.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) {
                 presented = authorization.Substring(prefix.Length).Trim();
             }
         }
 
         ApiPrincipal? principal = services.Keys.Authenticate(presented);
-        if (principal == null)
-        {
+        if (principal == null) {
             throw ApiException.Unauthorized();
         }
 
@@ -192,56 +178,34 @@ public static class ApiServer
         await next(context);
     }
 
-    private static async Task HandleErrorsAndAuditAsync(HttpContext context, RequestDelegate next, ApiServices services)
-    {
+    private static async Task HandleErrorsAndAuditAsync(HttpContext context, RequestDelegate next, ApiServices services) {
         bool audited = !IsOpenPath(context.Request.Path);
         Stopwatch watch = Stopwatch.StartNew();
-        try
-        {
+        try {
             await next(context);
-        }
-        catch (ApiException ex)
-        {
+        } catch (ApiException ex) {
             await WriteErrorAsync(context, ex.Status, ex.Code, ex.Message);
-        }
-        catch (DuckDBException ex)
-        {
-            if (context.Items.ContainsKey(QueryTimer.TimedOutItem))
-            {
+        } catch (DuckDBException ex) {
+            if (context.Items.ContainsKey(QueryTimer.TimedOutItem)) {
                 await WriteErrorAsync(context, 408, "query_timeout",
                     $"The query ran longer than {services.Options.QueryTimeoutSeconds} seconds and was cancelled.");
-            }
-            else
-            {
+            } else {
                 await WriteErrorAsync(context, 400, "sql_error", ex.Message);
             }
-        }
-        catch (SqlException ex)
-        {
+        } catch (SqlException ex) {
             await WriteErrorAsync(context, 502, "sql_server_error", "SQL Server reported an error: " + ex.Message);
-        }
-        catch (BadHttpRequestException ex)
-        {
+        } catch (BadHttpRequestException ex) {
             await WriteErrorAsync(context, ex.StatusCode, "bad_request", ex.Message);
-        }
-        catch (JsonException ex)
-        {
+        } catch (JsonException ex) {
             await WriteErrorAsync(context, 400, "invalid_json", "The request body is not valid JSON: " + ex.Message);
-        }
-        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
-        {
+        } catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) {
             context.Response.StatusCode = 499;
-        }
-        catch (Exception ex)
-        {
+        } catch (Exception ex) {
             Console.Error.WriteLine($"Unhandled error in {context.Request.Method} {context.Request.Path}: {ex}");
             await WriteErrorAsync(context, 500, "internal_error", "Something went wrong. The details are in the server's console.");
-        }
-        finally
-        {
+        } finally {
             watch.Stop();
-            if (audited)
-            {
+            if (audited) {
                 string key = context.Items.TryGetValue(ApiServices.PrincipalItem, out object? principal) && principal is ApiPrincipal p
                     ? p.KeyName
                     : "-";
@@ -254,10 +218,8 @@ public static class ApiServer
         }
     }
 
-    private static async Task WriteErrorAsync(HttpContext context, int status, string code, string message)
-    {
-        if (context.Response.HasStarted)
-        {
+    private static async Task WriteErrorAsync(HttpContext context, int status, string code, string message) {
+        if (context.Response.HasStarted) {
             // Part of a streamed result has already gone out, so the only honest signal left is to drop the connection.
             context.Abort();
             return;
@@ -267,5 +229,45 @@ public static class ApiServer
         context.Response.ContentType = "application/json; charset=utf-8";
         string body = JsonSerializer.Serialize(new { error = new { code, message } });
         await context.Response.WriteAsync(body);
+    }
+}
+
+/// <summary>A server that has been started. Dispose it to release the port.</summary>
+public sealed class RunningApi : IDisposable {
+    private readonly WebApplication _app;
+
+    internal RunningApi(WebApplication app) {
+        _app = app;
+    }
+
+    /// <summary>Blocks until the server is stopped (Ctrl+C, or POST /shutdown).</summary>
+    public void WaitForShutdown() {
+        _app.WaitForShutdown();
+    }
+
+    /// <summary>Stops accepting requests and waits briefly for the ones in progress to finish.</summary>
+    public void Stop() {
+        using (CancellationTokenSource timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10))) {
+            try {
+                _app.StopAsync(timeout.Token).GetAwaiter().GetResult();
+            } catch (OperationCanceledException) {
+                // Requests still running after the grace period are cut off.
+            }
+        }
+    }
+
+    public void Dispose() {
+        _app.DisposeAsync().AsTask().GetAwaiter().GetResult();
+    }
+}
+
+/// <summary>Leaves Ctrl+C alone, so the interactive shell that started the server keeps control of the console.</summary>
+internal sealed class DetachedLifetime : IHostLifetime {
+    public Task WaitForStartAsync(CancellationToken cancellationToken) {
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken) {
+        return Task.CompletedTask;
     }
 }
