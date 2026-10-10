@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using DataPuddle.Api;
 using Microsoft.Extensions.Configuration;
 
 namespace DataPuddle;
@@ -14,11 +15,15 @@ internal static class Program {
     private const string DefaultEnvironment = "Production";
 #endif
 
-    // Usage: DataPuddle [-i] [--reuse] [-f <configFile>] [-p name=value]... [--no-pipeline] [--dry-run] [connectionString] [outputDir]
+    // Usage: DataPuddle [-i] [--reuse] [--serve [--listen <url>] [--read-only]] [-f <configFile>] [-p name=value]... [--no-pipeline] [--dry-run] [connectionString] [outputDir]
     //   -i  open an interactive SQL shell against the local copy when the import finishes.
     //   --reuse  open the existing database file as it is (no recreate, no startup clones). The
     //       SQL Server connection is only needed if you later use .clone in the shell. Fails if the
     //       file does not exist. Use it to start from a copy of a previously cloned puddle.db.
+    //   --serve  after the cloning (and pipeline, and shell) finish, keep the local copy open and serve it
+    //       over a REST API until stopped. Settings are in the "Api" section of the config file.
+    //   --listen  address for --serve, such as http://127.0.0.1:5080 (overrides Api:Listen).
+    //   --read-only  with --serve, refuse every API request that could change data or files.
     //   -p  set a pipeline parameter (repeatable): -p CustomerId=1234. Overrides the pipeline file's defaults.
     //   --no-pipeline  do not run the pipeline named in the config (handy with -i).
     //   --dry-run  load and validate the pipeline, print the plan, and exit without cloning or running anything.
@@ -37,6 +42,9 @@ internal static class Program {
         bool reuse = false;
         bool noPipeline = false;
         bool dryRun = false;
+        bool serve = false;
+        bool readOnlyFlag = false;
+        string? listenOverride = null;
         Dictionary<string, string> cliParameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         List<string> positionalList = new List<string>();
         for (int i = 0; i < args.Length; i++) {
@@ -48,6 +56,17 @@ internal static class Program {
                 noPipeline = true;
             } else if (args[i] == "--dry-run") {
                 dryRun = true;
+            } else if (args[i] == "--serve") {
+                serve = true;
+            } else if (args[i] == "--read-only") {
+                readOnlyFlag = true;
+            } else if (args[i] == "--listen") {
+                if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1])) {
+                    Console.Error.WriteLine("--listen requires an address, e.g. --listen http://127.0.0.1:5080");
+                    return 2;
+                }
+                listenOverride = args[i + 1];
+                i++;
             } else if (args[i] == "-p") {
                 int equals = i + 1 < args.Length ? args[i + 1].IndexOf('=') : -1;
                 if (equals <= 0) {
@@ -71,6 +90,11 @@ internal static class Program {
             }
         }
         string[] positional = positionalList.ToArray();
+
+        if (!serve && (readOnlyFlag || listenOverride != null)) {
+            Console.Error.WriteLine("--read-only and --listen only apply together with --serve.");
+            return 2;
+        }
 
         string environmentName = Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? DefaultEnvironment;
 
@@ -117,13 +141,16 @@ internal static class Program {
         PipelineDefinition? pipeline = null;
         PipelineActionOptions? onSuccess = null;
         PipelineActionOptions? onError = null;
-        if (!noPipeline && !string.IsNullOrWhiteSpace(pipelineSetting)) {
+        string? pipelinePath = string.IsNullOrWhiteSpace(pipelineSetting)
+            ? null
+            : (Path.IsPathRooted(pipelineSetting) ? pipelineSetting : Path.Combine(configDirectory, pipelineSetting));
+        if (pipelinePath != null && (!noPipeline || serve)) {
             try {
-                string pipelinePath = Path.IsPathRooted(pipelineSetting)
-                    ? pipelineSetting
-                    : Path.Combine(configDirectory, pipelineSetting);
-                Dictionary<string, string> parameterOverrides = new Dictionary<string, string>(cliParameters, StringComparer.OrdinalIgnoreCase);
-                pipeline = PipelineDefinition.Load(pipelinePath, parameterOverrides);
+                if (!noPipeline) {
+                    Dictionary<string, string> parameterOverrides = new Dictionary<string, string>(cliParameters, StringComparer.OrdinalIgnoreCase);
+                    pipeline = PipelineDefinition.Load(pipelinePath, parameterOverrides);
+                }
+                // The actions are also needed for runs started through the API, even if no pipeline runs at startup.
                 onSuccess = PipelineActionOptions.Load(pipelineSection.GetSection("OnSuccess"), "Pipeline:OnSuccess");
                 onError = PipelineActionOptions.Load(pipelineSection.GetSection("OnError"), "Pipeline:OnError");
             } catch (PipelineConfigException ex) {
@@ -140,6 +167,16 @@ internal static class Program {
             }
             PrintPlan(pipeline, onSuccess, onError);
             return 0;
+        }
+
+        ApiOptions? apiOptions = null;
+        if (serve) {
+            try {
+                apiOptions = ApiOptions.Load(config.GetSection("Api"), Path.Combine(outDir, "api-audit.log"), configDirectory, listenOverride, readOnlyFlag);
+            } catch (ApiConfigException ex) {
+                Console.Error.WriteLine("API configuration error: " + ex.Message);
+                return 2;
+            }
         }
 
         string? connStr = positional.Length > 0 && !string.IsNullOrWhiteSpace(positional[0])
@@ -206,12 +243,26 @@ internal static class Program {
                 ConfigFile = Path.Combine(configDirectory, configFileName),
                 PipelineFile = pipeline.FilePath,
                 Database = options.DatabasePath,
-                CustomerId = ParseCustomerParameter(pipeline),
+                CustomerId = PipelineFinisher.CustomerIdFrom(pipeline.Parameters),
                 Parameters = new Dictionary<string, string>(pipeline.Parameters)
             };
         }
         Stopwatch runWatch = Stopwatch.StartNew();
         bool pipelineSucceeded = true;
+
+        int exitCode = 0;
+        bool completed = false;
+
+        // Writes the summary and fires the OnSuccess or OnError action. Runs after the database is closed,
+        // except with --serve, where the database stays open and it runs as soon as the server is listening.
+        int CompleteRun() {
+            int code = allMatch && pipelineSucceeded ? 0 : 1;
+            if (pipeline != null && summary != null) {
+                string summaryTarget = PipelineFinisher.ResolveSummaryTarget(pipelineSection["Summary"], outDir);
+                code = PipelineFinisher.Complete(pipeline, summary, pipelineSucceeded, allMatch, summaryTarget, onSuccess, onError);
+            }
+            return code;
+        }
 
         using (LocalStore copier = new LocalStore(options)) {
             copier.Log = Console.WriteLine;
@@ -296,49 +347,45 @@ internal static class Program {
             if (interactive && !startupFailed) {
                 PuddleShell.Run(copier);
             }
-        }
 
-        // The database file is closed now, so a program started by an action can open it.
-        int exitCode = allMatch && pipelineSucceeded ? 0 : 1;
-        if (pipeline != null && summary != null) {
-            string summaryJson = summary.ToJson();
-            string? summaryPath = null;
-            string? summarySetting = pipelineSection["Summary"];
-            string summaryTarget = string.IsNullOrWhiteSpace(summarySetting)
-                ? Path.Combine(outDir, "summary.json")
-                : Path.GetFullPath(summarySetting);
-            try {
-                Directory.CreateDirectory(Path.GetDirectoryName(summaryTarget) ?? Directory.GetCurrentDirectory());
-                File.WriteAllText(summaryTarget, summaryJson);
-                summaryPath = summaryTarget;
-                Console.WriteLine($"Summary: {summaryPath}");
-            } catch (Exception ex) {
-                Console.Error.WriteLine($"Could not write the summary file {summaryTarget}: {ex.Message}");
-            }
+            if (serve && apiOptions != null) {
+                if (startupFailed || !pipelineSucceeded || !allMatch) {
+                    Console.Error.WriteLine("The API was not started because the startup clones or the pipeline failed.");
+                } else {
+                    ApiServices services = new ApiServices(
+                        copier,
+                        new DatabaseGate(copier, apiOptions),
+                        apiOptions,
+                        new StaticKeyStore(apiOptions.Keys),
+                        new DefaultApiAuthorizer(apiOptions.ReadOnly),
+                        new AuditLog(apiOptions.AuditLogPath),
+                        new PipelineRunRegistry()) {
+                        PipelineFile = pipelinePath,
+                        PipelineParameters = new Dictionary<string, string>(cliParameters, StringComparer.OrdinalIgnoreCase),
+                        SummaryTarget = PipelineFinisher.ResolveSummaryTarget(pipelineSection["Summary"], outDir),
+                        OnSuccess = onSuccess,
+                        OnError = onError,
+                        EnvironmentName = environmentName,
+                        ConfigFile = Path.Combine(configDirectory, configFileName)
+                    };
 
-            Console.WriteLine($"Pipeline {pipeline.Name}: {summary.Status}" +
-                (summary.IgnoredFailures.HasValue ? $" ({summary.IgnoredFailures.Value} failed step(s) ignored)" : ""));
-            PipelineActionOptions? action = pipelineSucceeded && allMatch ? onSuccess : onError;
-            string actionLabel = pipelineSucceeded && allMatch ? "OnSuccess" : "OnError";
-            if (action != null) {
-                bool actionOk = PipelineActionRunner.Execute(actionLabel, action, summary, summaryJson, summaryPath, Console.WriteLine);
-                if (!actionOk && exitCode == 0) {
-                    exitCode = 3;
+                    // The server keeps the database open, so the summary and actions fire once it is listening.
+                    // That lets a webhook or program started by an action call the API back.
+                    ApiServer.Run(services, () => {
+                        exitCode = CompleteRun();
+                        completed = true;
+                    });
                 }
             }
         }
 
+        // The database file is closed now, so a program started by an action can open it.
+        if (!completed) {
+            exitCode = CompleteRun();
+        }
+
         Console.WriteLine($"Output: {outDir}");
         return exitCode;
-    }
-
-    // The summary's customerId comes from the CustomerId pipeline parameter when it is a whole number.
-    private static long? ParseCustomerParameter(PipelineDefinition pipeline) {
-        if (pipeline.Parameters.TryGetValue("CustomerId", out string? text) &&
-            long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long value)) {
-            return value;
-        }
-        return null;
     }
 
     private static void PrintPlan(PipelineDefinition pipeline, PipelineActionOptions? onSuccess, PipelineActionOptions? onError) {

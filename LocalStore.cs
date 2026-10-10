@@ -246,6 +246,26 @@ public sealed class LocalStore : IDisposable {
         }
     }
 
+    /// <summary>
+    /// Locks the database down so SQL can only read and write files inside the output folder and the
+    /// given extra folders: no other files, no attaching other databases, no loading extensions. The
+    /// setting cannot be undone until the program restarts. The API server calls this before it accepts requests.
+    /// </summary>
+    public void RestrictFileAccess(IEnumerable<string> extraDirectories) {
+        List<string> directories = new List<string> { _options.OutputDirectory };
+        directories.AddRange(extraDirectories);
+
+        List<string> literals = new List<string>();
+        foreach (string directory in directories) {
+            string normalized = Path.GetFullPath(directory).Replace('\\', '/').TrimEnd('/') + "/";
+            literals.Add("'" + EscapeLiteral(normalized) + "'");
+        }
+
+        Execute("SET allowed_directories=[" + string.Join(", ", literals) + "]");
+        Execute("SET enable_external_access=false");
+        Execute("SET lock_configuration=true");
+    }
+
     // ---------- SQL Server side ----------
 
     private SqlConnection GetSqlConnection() {

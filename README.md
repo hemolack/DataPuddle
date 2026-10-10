@@ -12,6 +12,7 @@ Typical flow:
 - [Configuration](#configuration)
 - [Command line](#command-line)
 - [Pipelines: non-interactive runs](#pipelines-non-interactive-runs)
+- [REST API](#rest-api-letting-other-programs-use-the-data)
 - [The interactive shell](#the-interactive-shell)
 - [Importing delimited files](#importing-delimited-files)
 - [Exporting](#exporting)
@@ -78,13 +79,16 @@ Note: JSON arrays merge by index across config layers, so a `Tables` list in `ap
 ## Command line
 
 ```
-DataPuddle [-i] [--reuse] [-f <configFile>] [-p name=value]... [--no-pipeline] [--dry-run] [connectionString] [outputDir]
+DataPuddle [-i] [--reuse] [--serve [--listen <url>] [--read-only]] [-f <configFile>] [-p name=value]... [--no-pipeline] [--dry-run] [connectionString] [outputDir]
 ```
 
 | Option | Meaning |
 |---|---|
 | `-i` | Open the interactive shell after the startup clones finish. |
 | `--reuse` | Open the existing database file as it is, instead of recreating it, and skip the startup clones. See [Starting from a copy](#starting-from-a-copy). |
+| `--serve` | After the startup work, keep the local copy open and serve it over a REST API. See [REST API](#rest-api-letting-other-programs-use-the-data). |
+| `--listen <url>` | With `--serve`, the address to listen on (overrides `Api:Listen`). |
+| `--read-only` | With `--serve`, refuse every request that would change data or files. |
 | `-f <path>`, `--config <path>` | Read settings from this JSON file instead of `appsettings.json`. See [One executable, many projects](#one-executable-many-projects). |
 | `-p name=value` | Set a pipeline parameter (repeatable). Overrides the pipeline file's defaults. See [Pipelines](#pipelines-non-interactive-runs). |
 | `--no-pipeline` | Skip the pipeline named in the config (useful with `-i` when you want to explore first). |
@@ -294,6 +298,165 @@ Step `status` is `success`, `failed` or `skipped`. Clone and export steps also c
 - `--reuse` skips the startup clones and runs the pipeline against the existing database, so a pipeline whose first step is a `clone` can add tables to a seeded copy.
 - `-i` opens the shell after the pipeline so you can inspect the result; `--no-pipeline -i` opens the shell without running the pipeline.
 - `--dry-run` never opens the database, contacts SQL Server or fires an action.
+
+## REST API: letting other programs use the data
+
+`--serve` keeps the local copy open and serves it over HTTP, so other programs (an eligibility checker, a report, a script, a spreadsheet macro) can read the data, add to it, and ask for more. Without it, the local copy can only be used by DataPuddle itself, because only one process can have the file open for writing.
+
+```
+DataPuddle --serve                       # clone, run the pipeline, then serve
+DataPuddle --reuse --serve               # serve an existing copy
+DataPuddle --serve --read-only           # readers only
+DataPuddle --serve --listen http://127.0.0.1:6000
+```
+
+When the server is up, open `http://127.0.0.1:5080/swagger` for interactive documentation. The pipeline's `OnSuccess` and `OnError` actions run as soon as the server is listening (not when it stops), so a webhook or program they start can call the API straight away. If the startup clones or the pipeline failed, the API is not started.
+
+### Settings
+
+The `Api` section of the config file (all optional):
+
+```json
+"Api": {
+  "Listen": "http://127.0.0.1:5080",
+  "ReadOnly": false,
+  "MaxRows": 10000,
+  "QueryTimeoutSeconds": 60,
+  "LockWaitSeconds": 30,
+  "MaxUploadMegabytes": 512,
+  "AllowFileAccess": false,
+  "AllowedDirectories": [ "feeds" ],
+  "AuditLog": "output/api-audit.log"
+}
+```
+
+| Setting | Meaning |
+|---|---|
+| `Key` | The API key (at least 16 characters). Set it with the `Api__Key` environment variable rather than in a file you keep in source control. If it is blank, a random key is made up and printed once when the server starts. |
+| `Listen` | Address to listen on. The default only accepts connections from this computer. |
+| `ReadOnly` | Refuse every request that changes data or files. `--read-only` does the same for one run. |
+| `MaxRows` | Most rows one response returns (default 10000). Callers can ask for fewer. |
+| `QueryTimeoutSeconds` | A query running longer than this is cancelled (HTTP 408). |
+| `LockWaitSeconds` | Requests take turns using the database. A request that waits longer than this gets HTTP 503. |
+| `MaxUploadMegabytes` | Largest request body, which limits file imports. |
+| `AllowFileAccess` | See [Files and safety](#files-and-safety). Default `false`. |
+| `AllowedDirectories` | Extra folders SQL sent to the API may read from and write to, in addition to the output folder. |
+| `Queries` | Named queries callers can run without sending SQL. See [Named queries](#named-queries). |
+| `AuditLog` | Where to log requests (default `api-audit.log` in the output folder). Set it to an empty string to turn the log off. |
+
+### Calling it
+
+Send the key with every request, as `X-Api-Key: <key>` or `Authorization: Bearer <key>`. Only `/health` and the documentation pages need no key.
+
+```
+curl -H "X-Api-Key: $KEY" http://127.0.0.1:5080/tables
+curl -H "X-Api-Key: $KEY" "http://127.0.0.1:5080/tables/dbo/invoices/rows?status=open&order=-created&limit=50"
+curl -H "X-Api-Key: $KEY" -H "Content-Type: application/json" \
+     -d '{"sql": "SELECT * FROM dbo.invoices WHERE customer_id = ?", "params": [1234]}' \
+     http://127.0.0.1:5080/sql
+```
+
+Errors come back as `{"error": {"code": "...", "message": "..."}}` with a matching HTTP status: 400 bad request or SQL error, 401 missing or wrong key, 403 not allowed (read-only mode), 404 unknown table, 408 query timeout, 409 a pipeline run is already going, 503 database busy.
+
+### Endpoints
+
+| Method and path | What it does |
+|---|---|
+| `GET /health` | Is the server up? No key needed. |
+| `GET /info` | Read-only mode, row limit, and other settings. |
+| `GET /tables` | Tables and views. |
+| `GET /tables/{schema}/{table}` | Columns, types and row count. |
+| `GET /tables/{schema}/{table}/rows` | Read rows. `columns=a,b`, `order=a,-b`, `limit`, `offset`, `format=json\|ndjson\|csv\|arrow`. Any other key is a filter (below). |
+| `POST /tables/{schema}/{table}/rows` | Insert rows: a JSON array of objects, one object, or newline-delimited JSON. All rows are added or none are. |
+| `PATCH /tables/{schema}/{table}/rows` | Update rows. With `?key=id`, each body object carries the key and the new values (`upsert=true` inserts rows that are not found). Without `key`, send one object of new values and choose rows with filters. |
+| `DELETE /tables/{schema}/{table}/rows` | Delete rows matching the filters. Needs a filter, or `all=true`. |
+| `DELETE /tables/{schema}/{table}` | Drop the table. |
+| `POST /tables/{schema}/{table}/import` | Load a whole file (the request body) into a table. `format=csv\|parquet\|json`, `mode=replace\|append\|create`, plus the CSV options `delimiter`, `header`, `dateformat`, `timestampformat`, `nullstr`, `allVarchar`. |
+| `GET /tables/{schema}/{table}/download` | Download the table as `csv` or `parquet`. |
+| `POST /sql` | Run one SQL statement. Body `{"sql": "...", "params": [..] or {..}, "maxRows": n}`, or plain text. |
+| `POST /script` | Run several statements in one transaction; if one fails, none take effect. |
+| `GET /queries` | The named queries you can run, with their parameters. See [Named queries](#named-queries). |
+| `GET /queries/{name}`, `POST /queries/{name}` | Run a named query. Parameters go in the query string or, with POST, a JSON body. |
+| `POST /clone` | Clone tables from SQL Server: `{"tables": ["dbo.invoices"]}`. |
+| `POST /export` | Export to files on the server: `{"tables": [...], "format": "delta\|csv\|tsv\|delimited", "delimiter": "\|"}`. |
+| `POST /pipeline/run` | Start the configured pipeline. Optional body `{"parameters": {"CustomerId": "1234"}}`. Returns `202` and an id. |
+| `GET /runs`, `GET /runs/{id}` | Status of pipeline runs started through the API, including the summary when finished. |
+| `POST /shutdown` | Stop the server. |
+
+**Filters.** On reading, updating and deleting, any query-string key that is not a reserved word is a filter on the column of that name: `?status=open`. Repeat a key to match any of the values: `?status=open&status=held`. Add a suffix for other tests: `.ne`, `.gt`, `.gte`, `.lt`, `.lte`, `.like` (case-insensitive, `%` and `_` wildcards) and `.isnull=true|false`, for example `?amount.gt=100&deleted.isnull=true`. Values are converted to the column's type, and none of them ever becomes SQL text. For anything more complex, use `/sql`.
+
+**Results.** JSON responses look like `{"columns": [{"name", "type"}], "rows": [{...}], "rowCount": n, "truncated": false}`. `truncated` is true when more rows exist than were returned. `ndjson` is one JSON object per line and `csv` has a header row; those formats cannot carry the `truncated` flag, so if the number of rows equals the limit (sent back in the `X-DataPuddle-Row-Limit` header), assume there may be more and page with `offset`. Dates and times are ISO 8601 text, large numbers stay numbers, binary values are base64.
+
+**Arrow.** `format=arrow` (or `Accept: application/vnd.apache.arrow.stream`) returns an Apache Arrow stream on any endpoint that returns rows. Analytics tools read it directly, with their types intact and no text parsing, which matters for large results:
+
+```python
+import pyarrow.ipc, requests
+response = requests.get("http://127.0.0.1:5080/tables/dbo/invoices/rows",
+                        params={"format": "arrow", "limit": 1000000},
+                        headers={"X-Api-Key": key}, stream=True)
+table = pyarrow.ipc.open_stream(response.raw).read_all()
+frame = table.to_pandas()
+```
+
+Numbers, booleans, text, dates, timestamps (as UTC) and decimals of up to 28 digits keep their types. Times, binary values, UUIDs, very large integers and nested values (lists, structs, maps) arrive as text: ISO 8601, base64 and JSON respectively. Like `csv` and `ndjson`, an Arrow stream cannot carry the `truncated` flag.
+
+**Changes are atomic.** Each request that changes data runs in one transaction, committed only if the whole request succeeds.
+
+**One at a time.** Requests take turns using the database. Large reads stream out row by row rather than being held in memory.
+
+### Named queries
+
+A named query is SQL you define in the config file and callers run by name. Callers send only parameter values, never SQL, so you can give a program the answers it needs without giving it free rein over the data. The database runs a read query inside a read-only transaction, so it cannot change anything even if its SQL tried to.
+
+```json
+"Api": {
+  "Queries": {
+    "open-invoices": {
+      "Description": "Unpaid invoices for one customer, oldest first",
+      "Sql": "SELECT * FROM dbo.invoices WHERE customer_id = $customerId AND balance > $minBalance ORDER BY invoice_date",
+      "Parameters": [
+        { "Name": "customerId", "Type": "integer" },
+        { "Name": "minBalance", "Type": "number", "Default": "0" }
+      ]
+    },
+    "set-eligibility": {
+      "Description": "Record an eligibility date",
+      "Mode": "write",
+      "SqlFile": "queries/set-eligibility.sql",
+      "Parameters": [
+        { "Name": "patientId", "Type": "integer" },
+        { "Name": "eligibleOn", "Type": "string" }
+      ]
+    }
+  }
+}
+```
+
+```
+curl -H "X-Api-Key: $KEY" "http://127.0.0.1:5080/queries/open-invoices?customerId=1234"
+curl -H "X-Api-Key: $KEY" -d '{"patientId": 77, "eligibleOn": "2026-03-01"}' -H "Content-Type: application/json" http://127.0.0.1:5080/queries/set-eligibility
+```
+
+| Setting | Meaning |
+|---|---|
+| `Sql` or `SqlFile` | The statement (exactly one of the two). A file path is relative to the config file. One statement only; refer to parameters as `$name`. |
+| `Description` | Shown by `GET /queries`. |
+| `Mode` | `read` (default) or `write`. A write query may change data, is committed if it succeeds, needs write access (so it is refused in read-only mode), and must be called with `POST`. |
+| `MaxRows` | Lower row limit for this query. |
+| `Parameters` | Each has a `Name`, a `Type` (`string` default, `integer`, `number`, `boolean`), and optionally a `Default`. A parameter without a default is required. |
+
+Callers supply parameters in the query string (`?customerId=1234`) or, with `POST`, in a JSON body; the body wins if both give one. A missing required parameter, an unknown parameter name, or a value that does not fit its type is a `400` that says which. Dates and timestamps are passed as `string` parameters and converted in the SQL, for example `CAST($eligibleOn AS DATE)`. Query results support the same `format` and `maxRows` options as other endpoints. A query is checked when the server starts, so a typo in the config stops the server with a clear message instead of failing on the first call.
+
+### Files and safety
+
+- **Read-only mode** is enforced by the database: SQL runs inside a read-only transaction, so it cannot write regardless of how it is phrased. Statements that write files or change settings (`COPY`, `EXPORT`, `ATTACH`, `SET`, and similar) are also refused with a clear message.
+- **File access.** Unless `AllowFileAccess` is true, SQL sent to the API can only touch files in the output folder and `AllowedDirectories`: it cannot read other files on the computer, attach other databases or load extensions. This cannot be turned off while the server runs. Pipeline steps run through the API are subject to the same limit, so if a pipeline's SQL reads files elsewhere, list that folder in `AllowedDirectories`. Turn `AllowFileAccess` on only when every caller is fully trusted.
+- **One key, full access.** Anyone holding the key can read and (unless read-only) change everything, including dropping tables and, through `/clone` and `/pipeline/run`, causing the program to connect to SQL Server. Keep the key secret and the server on a loopback address, or put it behind an HTTPS reverse proxy; the server warns if it is reachable from other computers over plain http.
+- **Audit log.** One JSON line per request: time, key name, method, path, status, duration, rows returned and a short fingerprint of the SQL. SQL text, query strings and request bodies are never logged, because they can hold personal data.
+
+### Later: different keys for different callers
+
+All access decisions go through one place (`IApiAuthorizer` in `Api/ApiSecurity.cs`), and keys are looked up through another (`IApiKeyStore`). Each endpoint states what it is about to do (read, write, run SQL, run a named query, administer) and which table or query it is about, before it touches any data. So adding keys with their own rights, such as read-only keys or keys limited to certain tables or queries, means replacing those two classes and extending the key settings; the endpoints do not change.
 
 ## The interactive shell
 
