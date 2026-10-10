@@ -1,0 +1,61 @@
+{
+  // Named in the config file:  "Pipeline": { "File": "samples/sample_pipeline.json" }
+  // Run it with:    DataPuddle -p CustomerId=1234
+  // Which rows are cloned is set by TableFilters in the config file, not here.
+  // Check it with:  DataPuddle --dry-run
+  "name": "acme-invoice-import",
+
+  // Defaults. Override on the command line with -p Name=value.
+  "parameters": {
+    "CustomerId": "1234",
+    "FeedFolder": "feeds"
+  },
+
+  "steps": [
+    {
+      "name": "load feed",
+      // Read everything as text first; conversion happens in the clean step.
+      "sql": [
+        "CREATE SCHEMA IF NOT EXISTS stage",
+        "CREATE TABLE stage.invoice_raw AS SELECT * FROM read_csv('${FeedFolder}/${CustomerId}/invoices.csv', delim = '|', header = true, all_varchar = true)"
+      ]
+    },
+    {
+      "name": "feed has no unreadable rows",
+      // Lists the problem rows, so the step fails if any come back (expectRows defaults to 0).
+      "assert": "SELECT * FROM stage.invoice_raw WHERE TRY_CAST(InvoiceId AS INTEGER) IS NULL OR TRY_CAST(InvoiceDate AS DATE) IS NULL OR TRY_CAST(Amount AS DECIMAL(12,2)) IS NULL"
+    },
+    {
+      "name": "clean",
+      // Several statements in one file: typing, trimming, removing duplicate invoice ids.
+      "file": "clean.sql"
+    },
+    {
+      "name": "refresh client table",
+      // Nice to have, not essential: if the clone fails, carry on with the data already cloned.
+      "clone": [ "dbo.client" ],
+      "continueOnError": true
+    },
+    {
+      "name": "keep only new invoices",
+      // SELECT ... INTO works here too; it is translated to CREATE TABLE ... AS.
+      "sql": "SELECT c.* INTO stage.invoice_new FROM stage.invoice_clean c LEFT JOIN dbo.invoices i ON i.InvoiceId = c.InvoiceId WHERE i.InvoiceId IS NULL"
+    },
+    {
+      "name": "all new invoices belong to this client",
+      "assert": "SELECT n.InvoiceId FROM stage.invoice_new n WHERE n.CustomerId <> ${CustomerId}"
+    },
+    {
+      "name": "at least one new invoice",
+      // expectRows is an exact count. Use a query that returns one row when things are fine.
+      "assert": "SELECT 1 WHERE (SELECT count(*) FROM stage.invoice_new) > 0",
+      "expectRows": 1
+    },
+    {
+      "name": "write ingest file",
+      "export": "delimited",
+      "delimiter": "|",
+      "tables": [ "stage.invoice_new" ]
+    }
+  ]
+}

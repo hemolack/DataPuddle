@@ -1,0 +1,56 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+artifacts/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+*.rsuser
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+project.lock.json
+
+# Test and coverage output
+TestResults/
+[Tt]est[Rr]esult*/
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.xml
+
+# Generated data from this project (local database and Delta Lake export)
+output/
+*.duckdb
+*.db
+*.duckdb.wal
+*.wal
+*.parquet
+_delta_log/
+
+# Local configuration and secrets
+# appsettings.json is committed and holds placeholder values plus the standard table list.
+# Real connection strings go in appsettings.Development.json (or another appsettings.<env>.json),
+# which the appsettings.*.json rule below keeps out of source control.
+appsettings.*.json
+!appsettings.example.json
+*.local.json
+.env
+
+# OS files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini

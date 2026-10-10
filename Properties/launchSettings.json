@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "DataPuddle": {
+      "commandName": "Project",
+      "commandLineArgs": "-i"
+    }
+  }
+}
