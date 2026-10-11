@@ -18,13 +18,13 @@ public static class PuddleShell {
     /// </summary>
     public static void Run(LocalStore store, Func<IDisposable>? acquireLock = null) {
         DuckDBConnection duck = store.Connection;
-        Console.WriteLine("╔════════════════════════════════════════════════╗");
-        Console.WriteLine("║      01000100 01100001 01110100 01100001       ║");
-        Console.WriteLine("║   █▀▄ █▀█ ▀█▀ █▀█   █▀█ █ █ █▀▄ █▀▄ █   █▀▀    ║");
-        Console.WriteLine("║   █ █ █▀█  █  █▀█   █▀▀ █▄█ █ █ █ █ █▄▄ ██▄    ║");
-        Console.WriteLine("║   ▀▀  ▀ ▀  ▀  ▀ ▀   ▀   ▀▀▀ ▀▀  ▀▀  ▀▀▀ ▀▀▀    ║");
-        Console.WriteLine("║010100000111010101100100011001000110110001100101║");
-        Console.WriteLine("╚════════════════════════════════════════════════╝");
+        Cli.Line("╔════════════════════════════════════════════════╗", "blue");
+        Cli.Line("║      01000100 01100001 01110100 01100001       ║", "blue");
+        Cli.Line("║   █▀▄ █▀█ ▀█▀ █▀█   █▀█ █ █ █▀▄ █▀▄ █   █▀▀    ║", "blue");
+        Cli.Line("║   █ █ █▀█  █  █▀█   █▀▀ █▄█ █ █ █ █ █▄▄ ██▄    ║", "blue");
+        Cli.Line("║   ▀▀  ▀ ▀  ▀  ▀ ▀   ▀   ▀▀▀ ▀▀  ▀▀  ▀▀▀ ▀▀▀    ║", "blue");
+        Cli.Line("║010100000111010101100100011001000110110001100101║", "blue");
+        Cli.Line("╚════════════════════════════════════════════════╝", "blue");
         Console.WriteLine();
         Console.WriteLine("DataPuddle interactive shell (changes affect the local database only; use '.help' for help)");
 

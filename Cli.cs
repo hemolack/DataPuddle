@@ -8,7 +8,7 @@ namespace DataPuddle;
 /// exactly as before (no escape codes, no extra line wrapping).
 /// </summary>
 internal static class Cli {
-    private const string TableNameStyle = "yellow";
+    private const string TableNameStyle = "bold yellow";
 
     private static readonly IAnsiConsole StdOut = AnsiConsole.Console;
     private static readonly IAnsiConsole StdErr = AnsiConsole.Create(new AnsiConsoleSettings {
