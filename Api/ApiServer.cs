@@ -120,7 +120,7 @@ public static class ApiServer {
             Console.WriteLine($"Named queries: {options.Queries.Count} (GET /queries)");
         }
         if (options.KeyWasGenerated) {
-            Cli.Line("No Api:Key is set, so a key was made up for this run:", "blinking olive");
+            Cli.Line("No Api:Key is set, so a key was made up for this run:", "rapidblink olive");
             Cli.Line("  " + options.Keys[0].Secret, "bold magenta");
             Console.WriteLine("Set Api:Key (or the Api__Key environment variable) to use the same key every time.");
         }
