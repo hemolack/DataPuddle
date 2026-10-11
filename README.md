@@ -320,7 +320,9 @@ The `Api` section of the config file (all optional):
 
 ```json
 "Api": {
-  "Listen": "http://127.0.0.1:5080",
+  "Address": "127.0.0.1",
+  "Port": 5080,
+  "AllowRemoteConnections": false,
   "ReadOnly": false,
   "MaxRows": 10000,
   "QueryTimeoutSeconds": 60,
@@ -335,7 +337,10 @@ The `Api` section of the config file (all optional):
 | Setting | Meaning |
 |---|---|
 | `Key` | The API key (at least 16 characters). Set it with the `Api__Key` environment variable rather than in a file you keep in source control. If it is blank, a random key is made up and printed once when the server starts. |
-| `Listen` | Address to listen on. The default only accepts connections from this computer. |
+| `Port` | Port to listen on (default 5080). |
+| `Address` | Network address to listen on. The default, `127.0.0.1`, accepts connections only from this computer. Use a specific IP address of this machine, or `0.0.0.0` (or `*`) for every network interface. IPv6 addresses such as `::1` or `::` also work. |
+| `AllowRemoteConnections` | Must be `true` before the server will listen on anything but this computer. Without it, an address such as `0.0.0.0` stops the program at startup with an explanation. Default `false`. |
+| `Listen` | Optional: the whole address in one setting, for example `http://127.0.0.1:6000`. Use it instead of `Address` and `Port`, not together with them. `--listen` overrides all of these. The same `AllowRemoteConnections` rule applies. |
 | `ReadOnly` | Refuse every request that changes data or files. `--read-only` does the same for one run. |
 | `MaxRows` | Most rows one response returns (default 10000). Callers can ask for fewer. |
 | `QueryTimeoutSeconds` | A query running longer than this is cancelled (HTTP 408). |
@@ -453,7 +458,7 @@ Callers supply parameters in the query string (`?customerId=1234`) or, with `POS
 
 - **Read-only mode** is enforced by the database: SQL runs inside a read-only transaction, so it cannot write regardless of how it is phrased. Statements that write files or change settings (`COPY`, `EXPORT`, `ATTACH`, `SET`, and similar) are also refused with a clear message.
 - **File access.** Unless `AllowFileAccess` is true, SQL sent to the API can only touch files in the output folder and `AllowedDirectories`: it cannot read other files on the computer, attach other databases or load extensions. This cannot be turned off while the server runs. Pipeline steps run through the API are subject to the same limit, so if a pipeline's SQL reads files elsewhere, list that folder in `AllowedDirectories`. Turn `AllowFileAccess` on only when every caller is fully trusted.
-- **One key, full access.** Anyone holding the key can read and (unless read-only) change everything, including dropping tables and, through `/clone` and `/pipeline/run`, causing the program to connect to SQL Server. Keep the key secret and the server on a loopback address, or put it behind an HTTPS reverse proxy; the server warns if it is reachable from other computers over plain http.
+- **One key, full access.** Anyone holding the key can read and (unless read-only) change everything, including dropping tables and, through `/clone` and `/pipeline/run`, causing the program to connect to SQL Server. Keep the key secret and the server on a loopback address, or put it behind an HTTPS reverse proxy. The server only accepts connections from other computers if you set `Api:AllowRemoteConnections`, and then warns that the key travels over plain http. It does not serve HTTPS itself. Also check the computer's firewall before opening a port to a network.
 - **Audit log.** One JSON line per request: time, key name, method, path, status, duration, rows returned and a short fingerprint of the SQL. SQL text, query strings and request bodies are never logged, because they can hold personal data.
 
 ### Later: different keys for different callers

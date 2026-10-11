@@ -1,5 +1,7 @@
 using System.Globalization;
+using System.Net;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 
 namespace DataPuddle.Api;
@@ -23,8 +25,14 @@ public sealed class ApiKeyDefinition {
 public sealed class ApiOptions {
     private const int MinimumKeyLength = 16;
 
-    /// <summary>Address to listen on. The default only accepts connections from this computer.</summary>
+    /// <summary>
+    /// The full address the server listens on, such as http://127.0.0.1:5080. Built from Api:Address and Api:Port,
+    /// unless Api:Listen or --listen gives a whole address.
+    /// </summary>
     public string Listen { get; init; } = "http://127.0.0.1:5080";
+
+    /// <summary>True when the address accepts connections from other computers (anything but loopback).</summary>
+    public bool ListensRemotely { get; init; }
 
     /// <summary>When true, every request that could change data or files is refused.</summary>
     public bool ReadOnly { get; init; }
@@ -61,10 +69,12 @@ public sealed class ApiOptions {
     public bool KeyWasGenerated { get; init; }
 
     public static ApiOptions Load(IConfigurationSection section, string defaultAuditLogPath, string configDirectory, string? listenOverride, bool readOnlyOverride) {
-        string listen = !string.IsNullOrWhiteSpace(listenOverride) ? listenOverride : (section["Listen"] ?? "http://127.0.0.1:5080");
-        if (!Uri.TryCreate(listen, UriKind.Absolute, out Uri? uri) ||
-            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)) {
-            throw new ApiConfigException($"Api:Listen must be an absolute http or https address such as http://127.0.0.1:5080, but was '{listen}'.");
+        string listen = ResolveListen(section, listenOverride);
+        bool remote = CheckListen(listen, out string host);
+        if (remote && !ReadBool(section, "AllowRemoteConnections", false)) {
+            throw new ApiConfigException(
+                $"The API is set to listen on {listen}, which accepts connections from other computers. " +
+                "Set Api:AllowRemoteConnections to true to allow that, or use Api:Address 127.0.0.1 to accept only this computer.");
         }
 
         bool readOnly = readOnlyOverride || ReadBool(section, "ReadOnly", false);
@@ -92,6 +102,7 @@ public sealed class ApiOptions {
 
         return new ApiOptions {
             Listen = listen,
+            ListensRemotely = remote,
             ReadOnly = readOnly,
             MaxRows = ReadInt(section, "MaxRows", 10000, 1),
             QueryTimeoutSeconds = ReadInt(section, "QueryTimeoutSeconds", 60, 1),
@@ -104,6 +115,63 @@ public sealed class ApiOptions {
             Keys = new List<ApiKeyDefinition> { new ApiKeyDefinition { Name = "default", Secret = secret } },
             KeyWasGenerated = generated
         };
+    }
+
+
+    // --listen wins, then Api:Listen (a whole address), then Api:Address and Api:Port.
+    private static string ResolveListen(IConfigurationSection section, string? listenOverride) {
+        if (!string.IsNullOrWhiteSpace(listenOverride)) {
+            return listenOverride.Trim();
+        }
+
+        string? address = section["Address"];
+        string? portText = section["Port"];
+        string? listenSetting = section["Listen"];
+        if (!string.IsNullOrWhiteSpace(listenSetting)) {
+            if (!string.IsNullOrWhiteSpace(address) || !string.IsNullOrWhiteSpace(portText)) {
+                throw new ApiConfigException("Set either Api:Listen (a whole address) or Api:Address and Api:Port, not both.");
+            }
+            return listenSetting.Trim();
+        }
+
+        int port = ReadInt(section, "Port", 5080, 1);
+        if (port > 65535) {
+            throw new ApiConfigException("Api:Port must be between 1 and 65535.");
+        }
+        address = string.IsNullOrWhiteSpace(address) ? "127.0.0.1" : address.Trim();
+        if (address.Contains(':') && !address.StartsWith('[')) {
+            address = "[" + address + "]";
+        }
+        return $"http://{address}:{port.ToString(CultureInfo.InvariantCulture)}";
+    }
+
+    // Validates the address and says whether it accepts connections from other computers.
+    private static bool CheckListen(string listen, out string host) {
+        // Kestrel accepts * and + as "every address"; System.Uri does not, so check with a stand-in.
+        bool wildcard = Regex.IsMatch(listen, @"^https?://[*+](:|/|$)");
+        string checkable = wildcard ? Regex.Replace(listen, @"^(https?://)[*+]", "${1}0.0.0.0") : listen;
+        if (!Uri.TryCreate(checkable, UriKind.Absolute, out Uri? uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)) {
+            throw new ApiConfigException($"The API address must look like http://127.0.0.1:5080, but was '{listen}'.");
+        }
+
+        host = uri.Host;
+        string bare = host.Trim('[', ']');
+        bool isName = !IPAddress.TryParse(bare, out _);
+        if (isName && !string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)) {
+            throw new ApiConfigException(
+                $"The API address host must be an IP address, localhost, or * for every address, but was '{host}'. " +
+                "Use Api:Address 0.0.0.0 to listen on every interface.");
+        }
+        return wildcard || !IsLoopbackHost(host);
+    }
+
+    /// <summary>True for localhost and loopback IP addresses.</summary>
+    public static bool IsLoopbackHost(string host) {
+        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)) {
+            return true;
+        }
+        return IPAddress.TryParse(host.Trim('[', ']'), out IPAddress? address) && IPAddress.IsLoopback(address);
     }
 
     private static string GenerateKey() {

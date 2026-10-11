@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Net;
 using System.Text.Json;
 using DataPuddle.Api.Endpoints;
 using DuckDB.NET.Data;
@@ -131,9 +130,9 @@ public static class ApiServer {
         if (services.Audit.FilePath != null) {
             Console.WriteLine("Audit log: " + services.Audit.FilePath);
         }
-        if (Uri.TryCreate(options.Listen, UriKind.Absolute, out Uri? uri) && !IsLoopback(uri.Host) && uri.Scheme == Uri.UriSchemeHttp) {
+        if (options.ListensRemotely && options.Listen.StartsWith("http://", StringComparison.OrdinalIgnoreCase)) {
             Console.WriteLine("WARNING: this address is reachable from other computers over plain http, so the key travels unencrypted. " +
-                "Use https, or a loopback address (127.0.0.1) behind a reverse proxy.");
+                "Use a loopback address (127.0.0.1) behind an HTTPS reverse proxy, or only a network you trust.");
         }
         if (!options.AllowFileAccess) {
             Console.WriteLine("File access is restricted to the output folder and Api:AllowedDirectories while the API runs; that includes SQL typed in the shell.");
@@ -141,13 +140,6 @@ public static class ApiServer {
         Console.WriteLine(interactive
             ? "The API stops when you leave the shell."
             : "Press Ctrl+C to stop.");
-    }
-
-    private static bool IsLoopback(string host) {
-        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)) {
-            return true;
-        }
-        return IPAddress.TryParse(host.Trim('[', ']'), out IPAddress? address) && IPAddress.IsLoopback(address);
     }
 
     private static bool IsOpenPath(PathString path) {
