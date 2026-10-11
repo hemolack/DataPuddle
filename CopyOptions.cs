@@ -29,6 +29,12 @@ public sealed class CopyOptions {
     public bool WriteDelta { get; init; }
 
     /// <summary>
+    /// When true (the default), the extended properties of each cloned table and its columns are copied too. They are stored in
+    /// puddle_meta.extended_properties, and each MS_Description also becomes the table's or column's comment in the local database.
+    /// </summary>
+    public bool ExtendedProperties { get; init; } = true;
+
+    /// <summary>
     /// Extra SQL Server predicate per table, used for both the load and the verification count. Keys are "schema.table"
     /// (or a bare table name), values are conditions such as "IsInactive = 0". Empty by default.
     /// </summary>

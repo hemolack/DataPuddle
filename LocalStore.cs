@@ -204,6 +204,10 @@ public sealed class LocalStore : IDisposable {
         long loaded = LoadRows(sql, schema, table, cols);
         Log($"  loaded {loaded:N0} rows into the local database");
 
+        if (_options.ExtendedProperties) {
+            CopyExtendedProperties(sql, schema, table);
+        }
+
         string deltaDir = DeltaDirectory(schema, table);
         if (_options.WriteDelta) {
             WriteDelta(schema, table, ToDeltaColumns(cols), deltaDir);
@@ -226,6 +230,79 @@ public sealed class LocalStore : IDisposable {
 
     public static string FormatElapsed(TimeSpan elapsed) {
         return elapsed.ToString(@"hh\:mm\:ss\.fff");
+    }
+
+    // ---------- Extended properties ----------
+
+    private const string MetaSchema = "puddle_meta";
+    private const string MetaTable = "extended_properties";
+    private const string DescriptionProperty = "MS_Description";
+
+    /// <summary>
+    /// Copies the SQL Server extended properties of a table and its columns into puddle_meta.extended_properties
+    /// (replacing any earlier rows for the table), and applies each MS_Description as the table's or column's comment.
+    /// A problem here is reported but never fails the clone.
+    /// </summary>
+    private void CopyExtendedProperties(SqlConnection sql, string schema, string table) {
+        try {
+            List<(string? Column, string Name, string? Value)> properties = ReadExtendedProperties(sql, schema, table);
+            string meta = QuoteDuck(MetaSchema) + "." + QuoteDuck(MetaTable);
+
+            Execute("CREATE SCHEMA IF NOT EXISTS " + QuoteDuck(MetaSchema));
+            Execute($"CREATE TABLE IF NOT EXISTS {meta} (schema_name VARCHAR, table_name VARCHAR, column_name VARCHAR, property_name VARCHAR, property_value VARCHAR)");
+            Execute($"DELETE FROM {meta} WHERE schema_name = '{EscapeLiteral(schema)}' AND table_name = '{EscapeLiteral(table)}'");
+
+            foreach ((string? Column, string Name, string? Value) property in properties) {
+                string column = property.Column == null ? "NULL" : "'" + EscapeLiteral(property.Column) + "'";
+                string value = property.Value == null ? "NULL" : "'" + EscapeLiteral(property.Value) + "'";
+                Execute($"INSERT INTO {meta} VALUES ('{EscapeLiteral(schema)}', '{EscapeLiteral(table)}', {column}, '{EscapeLiteral(property.Name)}', {value})");
+
+                if (property.Name == DescriptionProperty && property.Value != null) {
+                    try {
+                        string target = property.Column == null
+                            ? $"TABLE {QuoteDuck(schema)}.{QuoteDuck(table)}"
+                            : $"COLUMN {QuoteDuck(schema)}.{QuoteDuck(table)}.{QuoteDuck(property.Column)}";
+                        Execute($"COMMENT ON {target} IS '{EscapeLiteral(property.Value)}'");
+                    } catch (DuckDBException ex) {
+                        Log($"  could not apply the description of {(property.Column ?? "the table")}: {ex.Message}");
+                    }
+                }
+            }
+
+            if (properties.Count > 0) {
+                Log($"  copied {properties.Count:N0} extended propert{(properties.Count == 1 ? "y" : "ies")}");
+            }
+        } catch (Exception ex) {
+            Log($"  could not copy extended properties (the clone is not affected): {ex.Message}");
+        }
+    }
+
+    // The properties of the table (column is null) and of its columns. Values of any type are read as text.
+    private static List<(string? Column, string Name, string? Value)> ReadExtendedProperties(SqlConnection sql, string schema, string table) {
+        const string query = @"
+            SELECT c.name, ep.name, CONVERT(nvarchar(max), ep.value)
+            FROM sys.extended_properties ep
+            JOIN sys.objects o ON o.object_id = ep.major_id
+            JOIN sys.schemas s ON s.schema_id = o.schema_id
+            LEFT JOIN sys.columns c ON c.object_id = ep.major_id AND c.column_id = ep.minor_id AND ep.minor_id > 0
+            WHERE ep.class = 1 AND o.type IN ('U', 'V') AND s.name = @s AND o.name = @t
+              AND (ep.minor_id = 0 OR c.column_id IS NOT NULL)
+            ORDER BY ep.minor_id, ep.name";
+
+        List<(string? Column, string Name, string? Value)> properties = new List<(string? Column, string Name, string? Value)>();
+        using (SqlCommand cmd = new SqlCommand(query, sql)) {
+            cmd.Parameters.AddWithValue("@s", schema);
+            cmd.Parameters.AddWithValue("@t", table);
+            using (SqlDataReader r = cmd.ExecuteReader()) {
+                while (r.Read()) {
+                    properties.Add((
+                        r.IsDBNull(0) ? null : r.GetString(0),
+                        r.GetString(1),
+                        r.IsDBNull(2) ? null : r.GetString(2)));
+                }
+            }
+        }
+        return properties;
     }
 
     // ---------- DuckDB helpers for callers ----------

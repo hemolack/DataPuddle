@@ -24,7 +24,7 @@ public static class TableEndpoints {
 
         app.MapGet("/tables/{schema}/{table}", DescribeTable)
             .WithTags("Tables")
-            .WithSummary("Columns and row count of one table.");
+            .WithSummary("Columns, descriptions, extended properties and row count of one table.");
 
         app.MapGet("/tables/{schema}/{table}/rows", GetRows)
             .WithTags("Rows")
@@ -77,10 +77,10 @@ public static class TableEndpoints {
 
         using (DatabaseSession session = await api.Gate.EnterAsync(AccessMode.Read, cancellationToken, context))
         using (DuckDBCommand command = session.CreateCommand(
-            "SELECT schema_name AS \"schema\", table_name AS \"table\", 'table' AS kind, estimated_size AS estimated_rows " +
+            "SELECT schema_name AS \"schema\", table_name AS \"table\", 'table' AS kind, estimated_size AS estimated_rows, comment AS description " +
             "FROM duckdb_tables() WHERE database_name = current_database() " +
             "UNION ALL " +
-            "SELECT schema_name, view_name, 'view', NULL FROM duckdb_views() " +
+            "SELECT schema_name, view_name, 'view', NULL, comment FROM duckdb_views() " +
             "WHERE database_name = current_database() AND NOT internal " +
             "ORDER BY 1, 2"))
         using (session.StartTimer(command))
@@ -95,19 +95,56 @@ public static class TableEndpoints {
 
         List<ColumnInfo> columns;
         long rowCount;
+        string? description = null;
+        List<object> extendedProperties = new List<object>();
         using (DatabaseSession session = await api.Gate.EnterAsync(AccessMode.Read, cancellationToken, context)) {
             columns = TableAccess.GetColumns(session, schema, table);
             using (DuckDBCommand command = session.CreateCommand("SELECT COUNT(*) FROM " + TableAccess.QualifiedName(schema, table)))
             using (session.StartTimer(command)) {
                 rowCount = Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
             }
+
+            using (DuckDBCommand command = session.CreateCommand(
+                "SELECT comment FROM duckdb_tables() WHERE database_name = current_database() AND schema_name = ? AND table_name = ? " +
+                "UNION ALL " +
+                "SELECT comment FROM duckdb_views() WHERE database_name = current_database() AND schema_name = ? AND view_name = ?",
+                new object?[] { schema, table, schema, table }))
+            using (DbDataReader reader = command.ExecuteReader()) {
+                if (reader.Read() && !reader.IsDBNull(0)) {
+                    description = reader.GetString(0);
+                }
+            }
+
+            // Extended properties copied from SQL Server, when the local copy has them.
+            bool hasMeta;
+            using (DuckDBCommand command = session.CreateCommand(
+                "SELECT COUNT(*) FROM duckdb_tables() WHERE database_name = current_database() AND schema_name = 'puddle_meta' AND table_name = 'extended_properties'")) {
+                hasMeta = Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture) > 0;
+            }
+            if (hasMeta) {
+                using (DuckDBCommand command = session.CreateCommand(
+                    "SELECT column_name, property_name, property_value FROM puddle_meta.extended_properties " +
+                    "WHERE schema_name = ? AND table_name = ? ORDER BY column_name NULLS FIRST, property_name",
+                    new object?[] { schema, table }))
+                using (DbDataReader reader = command.ExecuteReader()) {
+                    while (reader.Read()) {
+                        extendedProperties.Add(new {
+                            column = reader.IsDBNull(0) ? null : reader.GetString(0),
+                            name = reader.GetString(1),
+                            value = reader.IsDBNull(2) ? null : reader.GetString(2)
+                        });
+                    }
+                }
+            }
         }
 
         await context.Response.WriteAsJsonAsync(new {
             schema,
             table,
+            description,
             rowCount,
-            columns = columns.Select(c => new { name = c.Name, type = c.DataType, nullable = c.Nullable })
+            columns = columns.Select(c => new { name = c.Name, type = c.DataType, nullable = c.Nullable, description = c.Comment }),
+            extendedProperties
         }, cancellationToken);
     }
 

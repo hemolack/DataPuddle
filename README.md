@@ -14,6 +14,7 @@ Typical flow:
 - [Pipelines: non-interactive runs](#pipelines-non-interactive-runs)
 - [REST API](#rest-api-letting-other-programs-use-the-data)
 - [The interactive shell](#the-interactive-shell)
+- [Extended properties](#extended-properties)
 - [Importing delimited files](#importing-delimited-files)
 - [Exporting](#exporting)
 - [SQL Server vs. the local SQL dialect](#sql-server-vs-the-local-sql-dialect)
@@ -57,6 +58,7 @@ The environment name comes from `DOTNET_ENVIRONMENT`. If it is not set, Debug bu
 | `Tables` | `schema.table` names cloned at startup. May be empty, in which case you clone on demand from the shell. |
 | `TableFilters` | Extra SQL Server condition per table, keyed by `schema.table` (or just the table name). It is applied to both the load and the verification count, so counts still agree. |
 | `WriteDelta` | When `true`, every cloned table is also written as a Delta table. Default `false`. |
+| `ExtendedProperties` | When `false`, SQL Server extended properties are not copied. Default `true`. See [Extended properties](#extended-properties). |
 
 Put your real server and database in `appsettings.Development.json`; it is excluded by `.gitignore`.
 
@@ -490,6 +492,16 @@ puddle> select * into stage.invoices from dbo.invoices where CustomerID = 1234;
 ```
 
 The target can be `name`, `schema.name` or `catalog.schema.name`, written bare, in `"double quotes"` or in `[brackets]`. A missing schema is created automatically. Works with CTEs (`WITH ... SELECT ... INTO`), joins, `UNION`, sub-queries and so on. As in SQL Server, it is an error if the target table already exists. Not translated: `#temp` targets, `@variable` targets and `SELECT TOP n ... INTO` (use `LIMIT`, and `CREATE TEMP TABLE` for temporary tables). Source tables written with `[brackets]` are not rewritten; see below.
+
+## Extended properties
+
+SQL Server extended properties (including the `MS_Description` notes that SSMS and many tools show as "Description") are copied along with each table. They come from the table itself and from each of its columns, and any property name is kept.
+
+- **`puddle_meta.extended_properties`** holds every property as a row: `schema_name`, `table_name`, `column_name` (empty for a property of the table itself), `property_name` and `property_value`. Query it like any other table, for example `SELECT * FROM puddle_meta.extended_properties WHERE table_name = 'visit'`. Values of any type are stored as text.
+- **Comments.** Each `MS_Description` is also set as the comment on the matching local table or column. `SELECT column_name, comment FROM duckdb_columns() WHERE table_name = 'visit'` lists the column descriptions, and `duckdb_tables()` has a `comment` column for tables.
+- **REST API.** `GET /tables` includes a `description` for each table, and `GET /tables/{schema}/{table}` returns the table and column descriptions plus all extended properties.
+
+Cloning a table again replaces its rows in `puddle_meta.extended_properties`, so the local copy matches the source. Tables you create yourself have none. Failing to read the properties (for example for lack of permission) is reported but never fails the clone. Set `"ExtendedProperties": false` in the config file to skip them. Delta and delimited exports do not include them.
 
 ## Importing delimited files
 

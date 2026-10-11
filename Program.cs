@@ -35,7 +35,8 @@ internal static class Program {
     // then SQLSERVER_CONNECTION in appsettings.json.
     // appsettings.json also holds "Tables" (schema.table names cloned at startup),
     // "TableFilters" (schema.table to an extra SQL Server condition, such as "IsInactive = 0") and
-    // "WriteDelta" (true to also export each cloned table as Delta files; default false).
+    // "WriteDelta" (true to also export each cloned table as Delta files; default false) and
+    // "ExtendedProperties" (false to skip copying SQL Server extended properties; default true).
     private static int Main(string[] args) {
         bool interactive = false;
         string? configPath = null;
@@ -216,12 +217,20 @@ internal static class Program {
             return 2;
         }
 
+        bool extendedProperties = true;
+        string? extendedPropertiesText = config["ExtendedProperties"];
+        if (!string.IsNullOrWhiteSpace(extendedPropertiesText) && !bool.TryParse(extendedPropertiesText, out extendedProperties)) {
+            Console.Error.WriteLine($"\"ExtendedProperties\" must be true or false, but was '{extendedPropertiesText}'.");
+            return 2;
+        }
+
         CopyOptions options = new CopyOptions {
             SqlConnectionString = connStr,
             OutputDirectory = outDir,
             Tables = tables,
             TableFilters = filters,
-            WriteDelta = writeDelta
+            WriteDelta = writeDelta,
+            ExtendedProperties = extendedProperties
         };
 
         if (reuse && !File.Exists(options.DatabasePath)) {

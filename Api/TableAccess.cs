@@ -7,7 +7,7 @@ using Microsoft.Extensions.Primitives;
 
 namespace DataPuddle.Api;
 
-public sealed record ColumnInfo(string Name, string DataType, bool Nullable, int Position);
+public sealed record ColumnInfo(string Name, string DataType, bool Nullable, int Position, string? Comment = null);
 
 /// <summary>A WHERE clause (empty, or starting with " WHERE ") and the values for its ? placeholders.</summary>
 public sealed record WhereClause(string Sql, List<object?> Parameters) {
@@ -34,7 +34,7 @@ public static class TableAccess {
     public static List<ColumnInfo> GetColumns(DatabaseSession session, string schema, string table) {
         List<ColumnInfo> columns = new List<ColumnInfo>();
         using (DuckDBCommand command = session.CreateCommand(
-            "SELECT column_name, data_type, is_nullable, column_index FROM duckdb_columns() " +
+            "SELECT column_name, data_type, is_nullable, column_index, comment FROM duckdb_columns() " +
             "WHERE database_name = current_database() AND schema_name = ? AND table_name = ? ORDER BY column_index",
             new object?[] { schema, table }))
         using (DbDataReader reader = command.ExecuteReader()) {
@@ -43,7 +43,8 @@ public static class TableAccess {
                     reader.GetString(0),
                     reader.GetString(1),
                     Convert.ToBoolean(reader.GetValue(2), CultureInfo.InvariantCulture),
-                    Convert.ToInt32(reader.GetValue(3), CultureInfo.InvariantCulture)));
+                    Convert.ToInt32(reader.GetValue(3), CultureInfo.InvariantCulture),
+                    reader.IsDBNull(4) ? null : reader.GetString(4)));
             }
         }
 
