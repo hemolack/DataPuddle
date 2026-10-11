@@ -82,6 +82,7 @@ public static class PuddleShell {
                             sqlText = translated;
                         }
                         ExecuteAndPrint(duck, sqlText);
+                        store.InheritExtendedProperties(sqlText);
                     } catch (Exception ex) {
                         Console.Error.WriteLine("Error: " + ex.Message);
                     }

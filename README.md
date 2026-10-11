@@ -501,7 +501,19 @@ SQL Server extended properties (including the `MS_Description` notes that SSMS a
 - **Comments.** Each `MS_Description` is also set as the comment on the matching local table or column. `SELECT column_name, comment FROM duckdb_columns() WHERE table_name = 'visit'` lists the column descriptions, and `duckdb_tables()` has a `comment` column for tables.
 - **REST API.** `GET /tables` includes a `description` for each table, and `GET /tables/{schema}/{table}` returns the table and column descriptions plus all extended properties.
 
-Cloning a table again replaces its rows in `puddle_meta.extended_properties`, so the local copy matches the source. Tables you create yourself have none. Failing to read the properties (for example for lack of permission) is reported but never fails the clone. Set `"ExtendedProperties": false` in the config file to skip them. Delta and delimited exports do not include them.
+### Properties follow the data (SELECT INTO / CREATE TABLE AS)
+
+When you create a local table from a query, the column properties of the columns it was built from are copied to the new table, so markers such as a PHI flag stay attached to the data. This applies to `SELECT ... INTO`, `CREATE TABLE ... AS SELECT` and `CREATE OR REPLACE TABLE ... AS SELECT`, whether run in the shell, in a pipeline SQL step, or through the API's `/sql` and `/script` endpoints.
+
+- A column that is a direct reference to a source column inherits all of that column's properties, including through aliases (`SELECT ssn AS id`), joins, subqueries, CTEs, `UNION`s and `*` (with `EXCLUDE`). Chains work too: a table built from an inherited table inherits again. A column fed by several sources gets the properties of all of them.
+- An `MS_Description` also becomes the column comment, when the sources agree on a single description. If they conflict, all are stored but no comment is set.
+- **Computed columns are not tagged.** An expression such as `upper(ssn)` or `ssn || name` is not a direct copy, so it gets no properties automatically. DataPuddle prints a note listing computed columns whose inputs carry properties, so you can review them and add rows to `puddle_meta.extended_properties` yourself where appropriate (a PHI-derived value usually should be tagged).
+- Table-level properties are not inherited.
+- If the query cannot be analysed (`SELECT * REPLACE/RENAME`, `COLUMNS(...)`, `*` over a table function, or a column count mismatch), nothing is inherited and a message says so. Check `puddle_meta.extended_properties` for such tables.
+- `INSERT INTO ... SELECT`, views, temporary tables, `CREATE TABLE IF NOT EXISTS` and named API queries do not inherit.
+- Set `"ExtendedProperties": false` to turn this off along with copying.
+
+Cloning a table again replaces its rows in `puddle_meta.extended_properties`, so the local copy matches the source. Tables you create yourself have none unless they inherit as above. Failing to read the properties (for example for lack of permission) is reported but never fails the clone. Set `"ExtendedProperties": false` in the config file to skip them. Delta and delimited exports do not include them.
 
 ## Importing delimited files
 

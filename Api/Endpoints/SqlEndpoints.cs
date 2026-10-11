@@ -54,11 +54,17 @@ public static class SqlEndpoints {
 
         int maxRows = request.MaxRows.HasValue ? Math.Min(request.MaxRows.Value, api.Options.MaxRows) : api.Options.MaxRows;
 
-        using (DatabaseSession session = await api.Gate.EnterAsync(mode, cancellationToken, context))
-        using (DuckDBCommand command = session.CreateCommand(request.Sql, request.Positional, request.Named))
-        using (session.StartTimer(command))
-        using (DbDataReader reader = command.ExecuteReader()) {
-            await ResultWriter.WriteAsync(context, reader, format, maxRows, cancellationToken);
+        using (DatabaseSession session = await api.Gate.EnterAsync(mode, cancellationToken, context)) {
+            using (DuckDBCommand command = session.CreateCommand(request.Sql, request.Positional, request.Named))
+            using (session.StartTimer(command))
+            using (DbDataReader reader = command.ExecuteReader()) {
+                await ResultWriter.WriteAsync(context, reader, format, maxRows, cancellationToken);
+            }
+
+            // A table created from other tables keeps their extended properties.
+            if (mode != AccessMode.Read) {
+                api.Store.InheritExtendedProperties(request.Sql);
+            }
             session.Commit();
         }
     }
@@ -83,6 +89,7 @@ public static class SqlEndpoints {
                 using (session.StartTimer(command)) {
                     command.ExecuteNonQuery();
                 }
+                api.Store.InheritExtendedProperties(statement);
             }
             session.Commit();
         }

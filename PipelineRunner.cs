@@ -115,6 +115,7 @@ public sealed class PipelineRunner {
                     statement = translated;
                 }
                 _store.Execute(statement);
+                _store.InheritExtendedProperties(statement);
             } catch (Exception ex) {
                 throw new InvalidOperationException(
                     $"statement {i + 1} of {count} failed: {ex.Message} -- {Snippet(step.Statements[i])}");

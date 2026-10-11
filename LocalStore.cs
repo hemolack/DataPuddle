@@ -34,7 +34,7 @@ internal sealed record DeltaColumn(
 /// through <see cref="ExportDelta"/>. After <see cref="Open"/> the DuckDB connection is available through
 /// <see cref="Connection"/> for further SQL work (for example local ETL).
 /// </summary>
-public sealed class LocalStore : IDisposable {
+public sealed partial class LocalStore : IDisposable {
     private readonly CopyOptions _options;
     private SqlConnection? _sql;
     private DuckDBConnection? _duck;
