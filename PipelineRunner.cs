@@ -56,12 +56,12 @@ public sealed class PipelineRunner {
                 if (step.ContinueOnError) {
                     stepSummary.ContinuedAfterFailure = true;
                     summary.IgnoredFailures = (summary.IgnoredFailures ?? 0) + 1;
-                    Console.Error.WriteLine($"  FAILED (continuing, continueOnError is set): {ex.Message}");
+                    Cli.Error($"  FAILED (continuing, continueOnError is set): {ex.Message}");
                     continue;
                 }
 
                 summary.Error = new PipelineError { Step = step.Name, Message = ex.Message };
-                Console.Error.WriteLine($"  FAILED: {ex.Message}");
+                Cli.Error($"  FAILED: {ex.Message}");
                 AddSkipped(pipeline, summary, i + 1);
                 return false;
             }

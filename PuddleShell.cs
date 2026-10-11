@@ -84,7 +84,7 @@ public static class PuddleShell {
                         ExecuteAndPrint(duck, sqlText);
                         store.InheritExtendedProperties(sqlText);
                     } catch (Exception ex) {
-                        Console.Error.WriteLine("Error: " + ex.Message);
+                        Cli.Error("Error: " + ex.Message);
                     }
                 }
             }
@@ -133,7 +133,7 @@ public static class PuddleShell {
                 string delimiterToken = ReadToken(ref rest);
                 char parsedDelimiter;
                 if (!TryParseDelimiter(delimiterToken, out parsedDelimiter)) {
-                    Console.Error.WriteLine(
+                    Cli.Error(
                         "Error: the delimited format needs a single delimiter character before the table names, " +
                         "for example: .export delimited | main.out   (use \\t or tab for a tab, or quote it: ';' )");
                     return;
@@ -142,7 +142,7 @@ public static class PuddleShell {
                 break;
             }
             default:
-                Console.Error.WriteLine($"Error: unknown export format '{formatToken}'. Use delta, csv, tsv or delimited <char>.");
+                Cli.Error($"Error: unknown export format '{formatToken}'. Use delta, csv, tsv or delimited <char>.");
                 return;
         }
 
@@ -155,12 +155,12 @@ public static class PuddleShell {
         try {
             tables = LocalStore.ParseTableList(rest);
         } catch (FormatException ex) {
-            Console.Error.WriteLine("Error: " + ex.Message);
+            Cli.Error("Error: " + ex.Message);
             return;
         }
 
         Action<string> previousLog = store.Log;
-        store.Log = Console.WriteLine;
+        store.Log = Cli.Log;
         try {
             int failed = 0;
             foreach ((string Schema, string Table) t in tables) {
@@ -171,7 +171,7 @@ public static class PuddleShell {
                     }
                 } catch (Exception ex) {
                     failed++;
-                    Console.Error.WriteLine($"Error exporting {t.Schema}.{t.Table}: {ex.Message}");
+                    Cli.Error($"Error exporting {t.Schema}.{t.Table}: {ex.Message}");
                 }
             }
             Console.WriteLine(failed == 0
@@ -234,12 +234,12 @@ public static class PuddleShell {
         try {
             tables = LocalStore.ParseTableList(argument);
         } catch (FormatException ex) {
-            Console.Error.WriteLine("Error: " + ex.Message);
+            Cli.Error("Error: " + ex.Message);
             return;
         }
 
         Action<string> previousLog = store.Log;
-        store.Log = Console.WriteLine;
+        store.Log = Cli.Log;
         try {
             int failed = 0;
             foreach ((string Schema, string Table) t in tables) {
@@ -250,12 +250,14 @@ public static class PuddleShell {
                     }
                 } catch (Exception ex) {
                     failed++;
-                    Console.Error.WriteLine($"Error cloning {t.Schema}.{t.Table}: {ex.Message}");
+                    Cli.Error($"Error cloning {t.Schema}.{t.Table}: {ex.Message}");
                 }
             }
-            Console.WriteLine(failed == 0
-                ? $"Cloned {tables.Count} table(s)."
-                : $"Cloned {tables.Count - failed} of {tables.Count} table(s) cleanly; {failed} had errors or count mismatches.");
+            if (failed == 0) {
+                Cli.Success($"Cloned {tables.Count} table(s).");
+            } else {
+                Cli.Warning($"Cloned {tables.Count - failed} of {tables.Count} table(s) cleanly; {failed} had errors or count mismatches.");
+            }
         } finally {
             store.Log = previousLog;
         }
@@ -305,7 +307,7 @@ public static class PuddleShell {
                     break;
             }
         } catch (Exception ex) {
-            Console.Error.WriteLine("Error: " + ex.Message);
+            Cli.Error("Error: " + ex.Message);
         }
         return true;
     }

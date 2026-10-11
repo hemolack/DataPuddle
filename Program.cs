@@ -64,7 +64,7 @@ internal static class Program {
                 readOnlyFlag = true;
             } else if (args[i] == "--listen") {
                 if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1])) {
-                    Console.Error.WriteLine("--listen requires an address, e.g. --listen http://127.0.0.1:5080");
+                    Cli.Error("--listen requires an address, e.g. --listen http://127.0.0.1:5080");
                     return 2;
                 }
                 listenOverride = args[i + 1];
@@ -72,20 +72,20 @@ internal static class Program {
             } else if (args[i] == "-p") {
                 int equals = i + 1 < args.Length ? args[i + 1].IndexOf('=') : -1;
                 if (equals <= 0) {
-                    Console.Error.WriteLine("-p requires name=value, e.g. -p CustomerId=1234");
+                    Cli.Error("-p requires name=value, e.g. -p CustomerId=1234");
                     return 2;
                 }
                 cliParameters[args[i + 1].Substring(0, equals)] = args[i + 1].Substring(equals + 1);
                 i++;
             } else if (args[i] == "-f" || args[i] == "--config") {
                 if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1])) {
-                    Console.Error.WriteLine($"{args[i]} requires a config file path, e.g. -f projects/acme.json");
+                    Cli.Error($"{args[i]} requires a config file path, e.g. -f projects/acme.json");
                     return 2;
                 }
                 configPath = args[i + 1];
                 i++;
             } else if (args[i].StartsWith('-')) {
-                Console.Error.WriteLine($"Unknown option '{args[i]}'.");
+                Cli.Error($"Unknown option '{args[i]}'.");
                 return 2;
             } else {
                 positionalList.Add(args[i]);
@@ -94,7 +94,7 @@ internal static class Program {
         string[] positional = positionalList.ToArray();
 
         if (!serve && (readOnlyFlag || listenOverride != null)) {
-            Console.Error.WriteLine("--read-only and --listen only apply together with --serve.");
+            Cli.Error("--read-only and --listen only apply together with --serve.");
             return 2;
         }
 
@@ -108,7 +108,7 @@ internal static class Program {
         if (configPath != null) {
             string fullConfigPath = Path.GetFullPath(configPath);
             if (!File.Exists(fullConfigPath)) {
-                Console.Error.WriteLine($"Config file not found: {fullConfigPath}");
+                Cli.Error($"Config file not found: {fullConfigPath}");
                 return 2;
             }
             configDirectory = Path.GetDirectoryName(fullConfigPath) ?? Directory.GetCurrentDirectory();
@@ -127,7 +127,7 @@ internal static class Program {
                 .AddEnvironmentVariables()
                 .Build();
         } catch (InvalidDataException ex) {
-            Console.Error.WriteLine($"Could not read the config file: {ex.Message}");
+            Cli.Error($"Could not read the config file: {ex.Message}");
             return 2;
         }
         Console.WriteLine($"Environment: {environmentName}");
@@ -156,14 +156,14 @@ internal static class Program {
                 onSuccess = PipelineActionOptions.Load(pipelineSection.GetSection("OnSuccess"), "Pipeline:OnSuccess");
                 onError = PipelineActionOptions.Load(pipelineSection.GetSection("OnError"), "Pipeline:OnError");
             } catch (PipelineConfigException ex) {
-                Console.Error.WriteLine("Pipeline configuration error: " + ex.Message);
+                Cli.Error("Pipeline configuration error: " + ex.Message);
                 return 2;
             }
         }
 
         if (dryRun) {
             if (pipeline == null) {
-                Console.Error.WriteLine("--dry-run needs a pipeline: set Pipeline:File in the config" +
+                Cli.Error("--dry-run needs a pipeline: set Pipeline:File in the config" +
                     (noPipeline ? " and drop --no-pipeline." : "."));
                 return 2;
             }
@@ -176,7 +176,7 @@ internal static class Program {
             try {
                 apiOptions = ApiOptions.Load(config.GetSection("Api"), Path.Combine(outDir, "api-audit.log"), configDirectory, listenOverride, readOnlyFlag);
             } catch (ApiConfigException ex) {
-                Console.Error.WriteLine("API configuration error: " + ex.Message);
+                Cli.Error("API configuration error: " + ex.Message);
                 return 2;
             }
         }
@@ -185,7 +185,7 @@ internal static class Program {
             ? positional[0]
             : config["SQLSERVER_CONNECTION"];
         if (string.IsNullOrWhiteSpace(connStr) && !reuse) {
-            Console.Error.WriteLine($"No connection string found. Set SQLSERVER_CONNECTION in {configFileName} or the environment, or pass it as the first argument.");
+            Cli.Error($"No connection string found. Set SQLSERVER_CONNECTION in {configFileName} or the environment, or pass it as the first argument.");
             return 2;
         }
 
@@ -199,7 +199,7 @@ internal static class Program {
             try {
                 LocalStore.ParseTableList(tables);
             } catch (FormatException ex) {
-                Console.Error.WriteLine($"Invalid entry in \"Tables\" in {configFileName}: " + ex.Message);
+                Cli.Error($"Invalid entry in \"Tables\" in {configFileName}: " + ex.Message);
                 return 2;
             }
         }
@@ -214,14 +214,14 @@ internal static class Program {
         bool writeDelta = false;
         string? writeDeltaText = config["WriteDelta"];
         if (!string.IsNullOrWhiteSpace(writeDeltaText) && !bool.TryParse(writeDeltaText, out writeDelta)) {
-            Console.Error.WriteLine($"\"WriteDelta\" must be true or false, but was '{writeDeltaText}'.");
+            Cli.Error($"\"WriteDelta\" must be true or false, but was '{writeDeltaText}'.");
             return 2;
         }
 
         bool extendedProperties = true;
         string? extendedPropertiesText = config["ExtendedProperties"];
         if (!string.IsNullOrWhiteSpace(extendedPropertiesText) && !bool.TryParse(extendedPropertiesText, out extendedProperties)) {
-            Console.Error.WriteLine($"\"ExtendedProperties\" must be true or false, but was '{extendedPropertiesText}'.");
+            Cli.Error($"\"ExtendedProperties\" must be true or false, but was '{extendedPropertiesText}'.");
             return 2;
         }
 
@@ -235,7 +235,7 @@ internal static class Program {
         };
 
         if (reuse && !File.Exists(options.DatabasePath)) {
-            Console.Error.WriteLine($"--reuse needs an existing database, but none was found at {options.DatabasePath}. " +
+            Cli.Error($"--reuse needs an existing database, but none was found at {options.DatabasePath}. " +
                 "Run once without --reuse to create it, or copy a puddle.db there.");
             return 2;
         }
@@ -244,10 +244,10 @@ internal static class Program {
         try {
             pluginOptions = PluginOptions.Load(config.GetSection("Plugins"));
         } catch (FormatException ex) {
-            Console.Error.WriteLine(ex.Message);
+            Cli.Error(ex.Message);
             return 2;
         }
-        PluginHost plugins = PluginHost.Load(pluginOptions, Console.WriteLine);
+        PluginHost plugins = PluginHost.Load(pluginOptions, Cli.Log);
 
         bool allMatch = true;
         bool startupFailed = false;
@@ -284,7 +284,7 @@ internal static class Program {
         }
 
         using (LocalStore copier = new LocalStore(options)) {
-            copier.Log = Console.WriteLine;
+            copier.Log = Cli.Log;
             copier.Plugins = plugins;
 
             try {
@@ -328,9 +328,9 @@ internal static class Program {
                             ? "Timings (read, load, verification and Delta export):"
                             : "Timings (read, load and verification):");
                         foreach (TableCopyResult result in results) {
-                            Console.WriteLine($"  {result.FullName,-20} {LocalStore.FormatElapsed(result.Elapsed)}");
+                            Cli.TableRow(result.FullName, LocalStore.FormatElapsed(result.Elapsed), 20);
                         }
-                        Console.WriteLine($"  {"total",-20} {LocalStore.FormatElapsed(totalWatch.Elapsed)}");
+                        Cli.TableRow("total", LocalStore.FormatElapsed(totalWatch.Elapsed), 20, "bold");
                     }
 
                     if (!allMatch && summary != null) {
@@ -345,17 +345,17 @@ internal static class Program {
                 startupFailed = true;
                 startupError = ex.Message;
                 allMatch = false;
-                Console.Error.WriteLine("Startup failed: " + ex.Message);
+                Cli.Error("Startup failed: " + ex.Message);
             }
 
             if (pipeline != null && summary != null) {
                 if (startupFailed) {
-                    Console.Error.WriteLine("The pipeline was not run because the startup clones failed.");
+                    Cli.Error("The pipeline was not run because the startup clones failed.");
                     summary.Error = new PipelineError { Step = "startup clones", Message = startupError ?? "unknown error" };
                     PipelineRunner.AddSkipped(pipeline, summary, 0);
                     pipelineSucceeded = false;
                 } else {
-                    PipelineRunner runner = new PipelineRunner(copier, Console.WriteLine);
+                    PipelineRunner runner = new PipelineRunner(copier, Cli.Log);
                     pipelineSucceeded = runner.Run(pipeline, summary);
                 }
                 runWatch.Stop();
@@ -368,7 +368,7 @@ internal static class Program {
             ApiServices? services = null;
             if (serve && apiOptions != null) {
                 if (startupFailed || !pipelineSucceeded || !allMatch) {
-                    Console.Error.WriteLine("The API was not started because the startup clones or the pipeline failed.");
+                    Cli.Error("The API was not started because the startup clones or the pipeline failed.");
                 } else {
                     services = new ApiServices(
                         copier,

@@ -45,7 +45,7 @@ public static class PipelineFinisher {
             summaryPath = summaryTarget;
             Console.WriteLine($"Summary: {summaryPath}");
         } catch (Exception ex) {
-            Console.Error.WriteLine($"Could not write the summary file {summaryTarget}: {ex.Message}");
+            Cli.Error($"Could not write the summary file {summaryTarget}: {ex.Message}");
         }
 
         Console.WriteLine($"Pipeline {pipeline.Name}: {summary.Status}" +
@@ -54,7 +54,7 @@ public static class PipelineFinisher {
         PipelineActionOptions? action = succeeded ? onSuccess : onError;
         string actionLabel = succeeded ? "OnSuccess" : "OnError";
         if (action != null) {
-            bool actionOk = PipelineActionRunner.Execute(actionLabel, action, summary, summaryJson, summaryPath, Console.WriteLine);
+            bool actionOk = PipelineActionRunner.Execute(actionLabel, action, summary, summaryJson, summaryPath, Cli.Log);
             if (!actionOk && exitCode == 0) {
                 exitCode = 3;
             }

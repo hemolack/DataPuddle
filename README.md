@@ -10,6 +10,7 @@ Typical flow:
 
 - [Getting started](#getting-started)
 - [Configuration](#configuration)
+- [Colored output](#colored-output)
 - [Command line](#command-line)
 - [Pipelines: non-interactive runs](#pipelines-non-interactive-runs)
 - [REST API](#rest-api-letting-other-programs-use-the-data)
@@ -79,6 +80,10 @@ DataPuddle -i -f projects/acme/puddle.json
 - The `appsettings.*.json` ignore rule in `.gitignore` only covers files with that name. If you keep project configs holding real connection strings in a repository, name them to match (for example `acme.local.json` is already ignored) or add your own ignore rule.
 
 Note: JSON arrays merge by index across config layers, so a `Tables` list in `appsettings.Development.json` overrides entries of the base list position by position rather than replacing the whole list.
+
+## Colored output
+
+Console output is colored with [Spectre.Console](https://spectreconsole.net/) when it goes to a terminal: table names in clone and export headings and in the timings list are yellow, row-count checks are green (`OK`) or red (`MISMATCH`), and errors are red. Colors are switched off automatically when output is redirected to a file or pipe, so logs stay plain text. Set the `NO_COLOR` environment variable to turn them off in a terminal too.
 
 ## Command line
 

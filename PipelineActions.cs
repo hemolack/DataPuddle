@@ -157,7 +157,7 @@ public static class PipelineActionRunner {
                         if (body.Length > 200) {
                             body = body.Substring(0, 200) + "...";
                         }
-                        Console.Error.WriteLine($"{label} webhook failed: HTTP {(int)response.StatusCode} {response.ReasonPhrase}. {body}");
+                        Cli.Error($"{label} webhook failed: HTTP {(int)response.StatusCode} {response.ReasonPhrase}. {body}");
                         return false;
                     }
                     log($"{label} webhook: HTTP {(int)response.StatusCode}");
@@ -165,7 +165,7 @@ public static class PipelineActionRunner {
                 }
             }
         } catch (Exception ex) {
-            Console.Error.WriteLine($"{label} webhook failed: {ex.Message}");
+            Cli.Error($"{label} webhook failed: {ex.Message}");
             return false;
         }
     }
@@ -193,25 +193,25 @@ public static class PipelineActionRunner {
             log($"{label} run: {run.Command}");
             using (Process? process = Process.Start(startInfo)) {
                 if (process == null) {
-                    Console.Error.WriteLine($"{label} run failed: could not start '{run.Command}'.");
+                    Cli.Error($"{label} run failed: could not start '{run.Command}'.");
                     return false;
                 }
                 if (!process.WaitForExit(run.TimeoutSeconds * 1000)) {
                     process.Kill(true);
-                    Console.Error.WriteLine($"{label} run failed: '{run.Command}' did not finish within {run.TimeoutSeconds} seconds and was stopped.");
+                    Cli.Error($"{label} run failed: '{run.Command}' did not finish within {run.TimeoutSeconds} seconds and was stopped.");
                     return false;
                 }
                 if (process.ExitCode != 0) {
-                    Console.Error.WriteLine($"{label} run failed: '{run.Command}' exited with code {process.ExitCode}.");
+                    Cli.Error($"{label} run failed: '{run.Command}' exited with code {process.ExitCode}.");
                     return false;
                 }
                 return true;
             }
         } catch (Win32Exception ex) {
-            Console.Error.WriteLine($"{label} run failed: could not start '{run.Command}': {ex.Message}");
+            Cli.Error($"{label} run failed: could not start '{run.Command}': {ex.Message}");
             return false;
         } catch (Exception ex) {
-            Console.Error.WriteLine($"{label} run failed: {ex.Message}");
+            Cli.Error($"{label} run failed: {ex.Message}");
             return false;
         }
     }

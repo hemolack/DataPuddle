@@ -54,7 +54,7 @@ public sealed class AuditLog {
                 File.AppendAllText(_path, line + Environment.NewLine);
             }
         } catch (IOException ex) {
-            Console.Error.WriteLine("Could not write the audit log: " + ex.Message);
+            Cli.Error("Could not write the audit log: " + ex.Message);
         }
     }
 }

@@ -220,7 +220,7 @@ public static class OperationEndpoints {
             bool succeeded;
             Stopwatch watch = Stopwatch.StartNew();
             using (DatabaseSession session = await api.Gate.EnterAsync(AccessMode.Exclusive, CancellationToken.None)) {
-                PipelineRunner runner = new PipelineRunner(api.Store, Console.WriteLine);
+                PipelineRunner runner = new PipelineRunner(api.Store, Cli.Log);
                 succeeded = runner.Run(pipeline, summary);
             }
             watch.Stop();
@@ -233,7 +233,7 @@ public static class OperationEndpoints {
             PipelineFinisher.Complete(pipeline, summary, succeeded, true, target, api.OnSuccess, api.OnError);
             api.Runs.Finish(run, summary, null);
         } catch (Exception ex) {
-            Console.Error.WriteLine("Pipeline run failed: " + ex.Message);
+            Cli.Error("Pipeline run failed: " + ex.Message);
             api.Runs.Finish(run, null, ex.Message);
         }
     }

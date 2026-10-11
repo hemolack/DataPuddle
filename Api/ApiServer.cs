@@ -98,7 +98,7 @@ public static class ApiServer {
                 try {
                     onStarted();
                 } catch (Exception ex) {
-                    Console.Error.WriteLine("Startup actions failed: " + ex.Message);
+                    Cli.Error("Startup actions failed: " + ex.Message);
                 }
             }
         });
@@ -193,7 +193,7 @@ public static class ApiServer {
         } catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) {
             context.Response.StatusCode = 499;
         } catch (Exception ex) {
-            Console.Error.WriteLine($"Unhandled error in {context.Request.Method} {context.Request.Path}: {ex}");
+            Cli.Error($"Unhandled error in {context.Request.Method} {context.Request.Path}: {ex}");
             await WriteErrorAsync(context, 500, "internal_error", "Something went wrong. The details are in the server's console.");
         } finally {
             watch.Stop();
