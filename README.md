@@ -15,6 +15,7 @@ Typical flow:
 - [REST API](#rest-api-letting-other-programs-use-the-data)
 - [The interactive shell](#the-interactive-shell)
 - [Extended properties](#extended-properties)
+- [Plugins](#plugins)
 - [Importing delimited files](#importing-delimited-files)
 - [Exporting](#exporting)
 - [SQL Server vs. the local SQL dialect](#sql-server-vs-the-local-sql-dialect)
@@ -59,6 +60,7 @@ The environment name comes from `DOTNET_ENVIRONMENT`. If it is not set, Debug bu
 | `TableFilters` | Extra SQL Server condition per table, keyed by `schema.table` (or just the table name). It is applied to both the load and the verification count, so counts still agree. |
 | `WriteDelta` | When `true`, every cloned table is also written as a Delta table. Default `false`. |
 | `ExtendedProperties` | When `false`, SQL Server extended properties are not copied. Default `true`. See [Extended properties](#extended-properties). |
+| `Plugins` | Plugin settings: `Enabled`, `Directories`, `Disabled`, and per-plugin `Settings`. See [Plugins](#plugins). |
 
 Put your real server and database in `appsettings.Development.json`; it is excluded by `.gitignore`.
 
@@ -497,8 +499,8 @@ The target can be `name`, `schema.name` or `catalog.schema.name`, written bare, 
 
 SQL Server extended properties (including the `MS_Description` notes that SSMS and many tools show as "Description") are copied along with each table. They come from the table itself and from each of its columns, and any property name is kept.
 
-- **`puddle_meta.extended_properties`** holds every property as a row: `schema_name`, `table_name`, `column_name` (empty for a property of the table itself), `property_name` and `property_value`. Query it like any other table, for example `SELECT * FROM puddle_meta.extended_properties WHERE table_name = 'visit'`. Values of any type are stored as text.
-- **Comments.** Each `MS_Description` is also set as the comment on the matching local table or column. `SELECT column_name, comment FROM duckdb_columns() WHERE table_name = 'visit'` lists the column descriptions, and `duckdb_tables()` has a `comment` column for tables.
+- **`puddle_meta.extended_properties`** holds every property as a row: `schema_name`, `table_name`, `column_name` (empty for a property of the table itself), `property_name` and `property_value`. Query it like any other table, for example `SELECT * FROM puddle_meta.extended_properties WHERE table_name = 'customer'`. Values of any type are stored as text.
+- **Comments.** Each `MS_Description` is also set as the comment on the matching local table or column. `SELECT column_name, comment FROM duckdb_columns() WHERE table_name = 'customer'` lists the column descriptions, and `duckdb_tables()` has a `comment` column for tables.
 - **REST API.** `GET /tables` includes a `description` for each table, and `GET /tables/{schema}/{table}` returns the table and column descriptions plus all extended properties.
 
 ### Properties follow the data (SELECT INTO / CREATE TABLE AS)
@@ -514,6 +516,61 @@ When you create a local table from a query, the column properties of the columns
 - Set `"ExtendedProperties": false` to turn this off along with copying.
 
 Cloning a table again replaces its rows in `puddle_meta.extended_properties`, so the local copy matches the source. Tables you create yourself have none unless they inherit as above. Failing to read the properties (for example for lack of permission) is reported but never fails the clone. Set `"ExtendedProperties": false` in the config file to skip them. Delta and delimited exports do not include them.
+
+## Plugins
+
+DataPuddle can be extended with plugins: ordinary .NET class libraries that add **SQL functions**, such as an encryption helper or a PHI de-identifier. Drop the plugin's DLL next to the program and restart; its functions can then be used in the shell, in pipeline SQL steps, and through the API.
+
+```sql
+SELECT mask_value(ssn), hash_value(mrn), encrypt_value(last_name) FROM dbo.patient;
+CREATE TABLE stage.patient_deid AS SELECT hash_value(mrn) AS mrn_hash, mask_value(ssn) AS ssn FROM dbo.patient;
+```
+
+**Where plugins are found.** The current directory, the program's own folder, the `plugins` subfolder of each, and any folders listed in `Plugins:Directories`. Only DLLs that reference DataPuddle are considered, so the libraries sitting beside the program are never mistaken for plugins. Each plugin loads in its own context, so it can bring its own dependencies (keep its `.deps.json` beside it).
+
+**See what loaded.** Startup prints a line per plugin. In the shell, `.plugins` lists plugins and their functions; the API has `GET /plugins`. A plugin that fails to start is reported and skipped; the rest still load.
+
+**Configuration**
+
+```json
+"Plugins": {
+  "Enabled": true,
+  "Directories": [],
+  "Disabled": [],
+  "Settings": {
+    "Privacy": { "MaskKeep": "4" }
+  }
+}
+```
+
+- `Enabled: false` loads no plugins. `Disabled` lists plugin names to leave unstarted.
+- `Settings:<PluginName>` is passed to that plugin. Secrets belong in environment variables, which override the file: `Plugins__Settings__Privacy__Key=<base64>`.
+
+**Security.** A plugin is arbitrary code that runs with all the program's permissions (database, files, network). Only use DLLs you built or trust. The API's file-access restriction does not limit plugin code.
+
+### Writing a plugin
+
+1. Create a class library targeting `net8.0` and reference `DataPuddle.csproj` (or `DataPuddle.dll`) with `<Private>false</Private>`, so the running program supplies it.
+2. Implement `IPuddlePlugin` in a public class with a parameterless constructor and register functions in `Initialize`:
+
+```csharp
+public sealed class MyPlugin : IPuddlePlugin {
+    public string Name { get { return "My"; } }
+    public string Description { get { return "Example functions"; } }
+
+    public void Initialize(IPluginContext context) {
+        context.RegisterStringFunction("shout", (string? s) => s?.ToUpperInvariant(), "Upper-cases text.");
+    }
+}
+```
+
+3. Build and copy the DLL (and any dependencies) next to DataPuddle.
+
+Function rules: string functions take 1 to 3 string arguments, integer (`long`) and double functions take 1 or 2. SQL `NULL` arrives as `null`, and returning `null` gives `NULL`. Throwing fails the statement with your message. Names are letters, digits and underscores and must not clash with a built-in or another plugin's function. DuckDB may evaluate a call whose arguments are all constants once and reuse the result, so a function with random output (such as encryption with a fresh nonce) can return the same text for identical constant arguments; with column arguments each row is computed separately.
+
+`samples/plugins/Privacy` is a complete example: `mask_value`, `hash_value` (keyed, so joins still work), `encrypt_value` and `decrypt_value` (AES-256-GCM). Generate a key with `openssl rand -base64 32`.
+
+Plugin functions exist only for the session; they are not stored in `puddle.db`. Open the file with a different tool and queries using them will not run.
 
 ## Importing delimited files
 

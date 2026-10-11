@@ -54,7 +54,7 @@ public static class PuddleShell {
             if (buffer.Length == 0 && trimmed.StartsWith('.')) {
                 bool keepGoing;
                 using (acquireLock?.Invoke()) {
-                    keepGoing = HandleDotCommand(duck, trimmed);
+                    keepGoing = HandleDotCommand(store, duck, trimmed);
                 }
                 if (!keepGoing) {
                     break;
@@ -262,7 +262,7 @@ public static class PuddleShell {
     }
 
     // Returns false when the shell should exit.
-    private static bool HandleDotCommand(DuckDBConnection duck, string command) {
+    private static bool HandleDotCommand(LocalStore store, DuckDBConnection duck, string command) {
         string[] parts = command.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         string name = parts[0].ToLowerInvariant();
 
@@ -284,6 +284,11 @@ public static class PuddleShell {
                         ExecuteAndPrint(duck, $"DESCRIBE {parts[1]};");
                     }
                     break;
+                case ".plugins":
+                    foreach (string line in (store.Plugins ?? DataPuddle.Plugins.PluginHost.Empty()).Describe()) {
+                        Console.WriteLine(line);
+                    }
+                    break;
                 case ".help":
                     Console.WriteLine("End SQL statements with ';'.");
                     Console.WriteLine("Commands:");
@@ -291,6 +296,7 @@ public static class PuddleShell {
                     Console.WriteLine("     .export <delta|csv|tsv|delimited <char>> <schema.table>[, ...]");
                     Console.WriteLine("     .tables");
                     Console.WriteLine("     .schema <table>");
+                    Console.WriteLine("     .plugins");
                     Console.WriteLine("     .help");
                     Console.WriteLine("     .quit");
                     break;

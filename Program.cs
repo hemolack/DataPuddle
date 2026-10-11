@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using DataPuddle.Api;
+using DataPuddle.Plugins;
 using Microsoft.Extensions.Configuration;
 
 namespace DataPuddle;
@@ -239,6 +240,15 @@ internal static class Program {
             return 2;
         }
 
+        PluginOptions pluginOptions;
+        try {
+            pluginOptions = PluginOptions.Load(config.GetSection("Plugins"));
+        } catch (FormatException ex) {
+            Console.Error.WriteLine(ex.Message);
+            return 2;
+        }
+        PluginHost plugins = PluginHost.Load(pluginOptions, Console.WriteLine);
+
         bool allMatch = true;
         bool startupFailed = false;
         string? startupError = null;
@@ -275,6 +285,7 @@ internal static class Program {
 
         using (LocalStore copier = new LocalStore(options)) {
             copier.Log = Console.WriteLine;
+            copier.Plugins = plugins;
 
             try {
                 if (reuse) {

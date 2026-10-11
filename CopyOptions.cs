@@ -18,7 +18,7 @@ public sealed class CopyOptions {
 
     /// <summary>
     /// Tables cloned by <see cref="LocalStore.CopyAll"/>, each written as schema.table
-    /// (for example "dbo.visit"). Empty by default. The same schema and table names are used in DuckDB.
+    /// (for example "dbo.customer"). Empty by default. The same schema and table names are used in DuckDB.
     /// </summary>
     public IReadOnlyList<string> Tables { get; init; } = Array.Empty<string>();
 

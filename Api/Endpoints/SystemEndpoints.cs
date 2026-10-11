@@ -16,6 +16,23 @@ public static class SystemEndpoints {
             .WithTags("System")
             .WithSummary("Is the server up? Needs no key.");
 
+        app.MapGet("/plugins", (HttpContext context, ApiServices api) => {
+            api.Authorize(context, ApiAction.Read);
+            DataPuddle.Plugins.PluginHost host = api.Store.Plugins ?? DataPuddle.Plugins.PluginHost.Empty();
+            return Results.Json(new {
+                plugins = host.Plugins.Select(p => new { p.Name, p.Description, p.Version }),
+                functions = host.Functions.Select(f => new {
+                    f.Name,
+                    f.PluginName,
+                    f.Signature,
+                    f.Description,
+                    f.Registered
+                })
+            });
+        })
+            .WithTags("System")
+            .WithSummary("Plugins that are loaded and the SQL functions they provide.");
+
         app.MapGet("/info", (HttpContext context, ApiServices api) => {
             api.Authorize(context, ApiAction.Read);
             return Results.Json(new {

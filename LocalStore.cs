@@ -46,6 +46,12 @@ public sealed partial class LocalStore : IDisposable {
     /// <summary>Receives progress messages. Does nothing by default.</summary>
     public Action<string> Log { get; set; } = _ => { };
 
+    /// <summary>
+    /// Plugins whose SQL functions are registered on the connection by <see cref="Open"/>.
+    /// Set this before calling Open.
+    /// </summary>
+    public DataPuddle.Plugins.PluginHost? Plugins { get; set; }
+
     public CopyOptions Options {
         get {
             return _options;
@@ -94,6 +100,7 @@ public sealed partial class LocalStore : IDisposable {
         _duck = duck;
 
         Execute("SET TimeZone='UTC'");
+        Plugins?.Attach(duck, Log);
     }
 
     public void Dispose() {
@@ -131,7 +138,7 @@ public sealed partial class LocalStore : IDisposable {
         return results;
     }
 
-    /// <summary>Clones a comma-separated list such as "dbo.visit, dbo.payment".</summary>
+    /// <summary>Clones a comma-separated list such as "dbo.customer, dbo.invoice".</summary>
     public IReadOnlyList<TableCopyResult> Clone(string tableList) {
         return Clone(tableList.Split(','));
     }

@@ -22,6 +22,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The sample plugin is its own project; keep it out of this one. -->
+    <Compile Remove="samples/**" />
+    <None Remove="samples/**" />
+    <EmbeddedResource Remove="samples/**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
