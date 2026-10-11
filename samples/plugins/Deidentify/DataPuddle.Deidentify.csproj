@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Safe Harbor de-identification plugin. Build it, then copy bin/<config>/net8.0/DataPuddle.Deidentify.dll next to DataPuddle. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>DataPuddle.Deidentify</AssemblyName>
+    <RootNamespace>DataPuddle.Deidentify</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Private=false: do not copy DataPuddle.dll beside the plugin; the running program supplies it. -->
+    <ProjectReference Include="..\..\..\DataPuddle.csproj">
+      <Private>false</Private>
+    </ProjectReference>
+  </ItemGroup>
+
+</Project>
