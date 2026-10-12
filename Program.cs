@@ -37,7 +37,8 @@ internal static class Program {
     // appsettings.json also holds "Tables" (schema.table names cloned at startup),
     // "TableFilters" (schema.table to an extra SQL Server condition, such as "IsInactive = 0") and
     // "WriteDelta" (true to also export each cloned table as Delta files; default false) and
-    // "ExtendedProperties" (false to skip copying SQL Server extended properties; default true).
+    // "ExtendedProperties" (false to skip copying SQL Server extended properties; default true) and
+    // "DeleteDataOnExit" (true, the default, deletes the DuckDB file and Delta files when the program ends).
     private static int Main(string[] args) {
         bool interactive = false;
         string? configPath = null;
@@ -225,6 +226,13 @@ internal static class Program {
             return 2;
         }
 
+        bool deleteDataOnExit = true;
+        string? deleteDataText = config["DeleteDataOnExit"];
+        if (!string.IsNullOrWhiteSpace(deleteDataText) && !bool.TryParse(deleteDataText, out deleteDataOnExit)) {
+            Cli.Error($"\"DeleteDataOnExit\" must be true or false, but was '{deleteDataText}'.");
+            return 2;
+        }
+
         CopyOptions options = new CopyOptions {
             SqlConnectionString = connStr,
             OutputDirectory = outDir,
@@ -286,6 +294,12 @@ internal static class Program {
         using (LocalStore copier = new LocalStore(options)) {
             copier.Log = Cli.Log;
             copier.Plugins = plugins;
+
+            if (deleteDataOnExit && reuse) {
+                Console.WriteLine("DeleteDataOnExit is ignored with --reuse, so the database you opened is kept.");
+            } else if (deleteDataOnExit) {
+                new ExitCleanup(copier).Register();
+            }
 
             try {
                 if (reuse) {

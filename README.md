@@ -14,6 +14,7 @@ Typical flow:
 
 - [Getting started](#getting-started)
 - [Configuration](#configuration)
+- [Cleaning up on exit](#cleaning-up-on-exit)
 - [Colored output](#colored-output)
 - [Command line](#command-line)
 - [Pipelines: non-interactive runs](#pipelines-non-interactive-runs)
@@ -64,6 +65,7 @@ The environment name comes from `DOTNET_ENVIRONMENT`. If it is not set, Debug bu
 | `Tables` | `schema.table` names cloned at startup. May be empty, in which case you clone on demand from the shell. |
 | `TableFilters` | Extra SQL Server condition per table, keyed by `schema.table` (or just the table name). It is applied to both the load and the verification count, so counts still agree. |
 | `WriteDelta` | When `true`, every cloned table is also written as a Delta table. Default `false`. |
+| `DeleteDataOnExit` | When `true` (the default), the local database file and any Delta files are deleted when the program ends, so cloned data is not left on disk. Set `false` to keep them. See [Cleaning up on exit](#cleaning-up-on-exit). |
 | `ExtendedProperties` | When `false`, SQL Server extended properties are not copied. Default `true`. See [Extended properties](#extended-properties). |
 | `Plugins` | Plugin settings: `Enabled`, `Directories`, `Disabled`, and per-plugin `Settings`. See [Plugins](#plugins). |
 
@@ -84,6 +86,15 @@ DataPuddle -i -f projects/acme/puddle.json
 - The `appsettings.*.json` ignore rule in `.gitignore` only covers files with that name. If you keep project configs holding real connection strings in a repository, name them to match (for example `acme.local.json` is already ignored) or add your own ignore rule.
 
 Note: JSON arrays merge by index across config layers, so a `Tables` list in `appsettings.Development.json` overrides entries of the base list position by position rather than replacing the whole list.
+
+## Cleaning up on exit
+
+By default DataPuddle removes what it created when the program ends: `output/puddle.db` (with its `.wal` file) and the `output/delta` folder, which holds Delta tables from `WriteDelta` and `.export delta`. This keeps cloned data, which may include PHI, from lying around. It happens after everything else has finished, including programs started by pipeline actions, and also when you quit the shell, stop the API or press Ctrl+C.
+
+- Set `"DeleteDataOnExit": false` (or the environment variable `DeleteDataOnExit=false`) to keep the files.
+- Other exports (CSV, TSV, delimited), the pipeline summary and the API audit log are not deleted; they are your results.
+- With `--reuse` nothing is deleted, because that database is a file you supplied.
+- A crash, a killed process or a power loss skips the cleanup. If a file is still locked, a warning names it so you can remove it yourself.
 
 ## Colored output
 
