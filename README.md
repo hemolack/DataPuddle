@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.jpg" alt="Data Puddle logo" width="500"/>
+</p>
+
 # DataPuddle
 
 DataPuddle clones tables from SQL Server into a small local database file, so you can run lookups, transforms and validation with plain SQL on your own machine instead of against production. When the work is done you can export any local table as Delta, CSV, TSV or any single-character-delimited text file.
