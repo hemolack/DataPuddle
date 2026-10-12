@@ -9,7 +9,7 @@ DataPuddle clones tables from SQL Server into a small local database file, so yo
 Typical flow:
 
 1. Clone the tables you need (`dbo.invoices`, `dbo.lineitems`, ...) from SQL Server.
-2. Import delimited files from a client, then query, join, clean and reshape everything locally.
+2. Import delimited files, then query, join, clean and reshape everything locally.
 3. Export the result in a form the main database can ingest with no further transformation.
 
 - [Getting started](#getting-started)
@@ -204,7 +204,7 @@ The actions run after the database file has been closed, so a program you start 
       "sql": "CREATE TABLE stage.invoice_in AS SELECT * FROM read_csv('feeds/${CustomerId}/invoices.csv', delim = '|', header = true, all_varchar = true)"
     },
     { "name": "clean", "file": "clean.sql" },
-    { "name": "reference tables", "clone": [ "dbo.client", "dbo.provider" ] },
+    { "name": "reference tables", "clone": [ "dbo.region", "dbo.product" ] },
     {
       "name": "no duplicate invoices",
       "assert": "SELECT InvoiceId FROM stage.invoice_clean GROUP BY InvoiceId HAVING count(*) > 1"
@@ -229,7 +229,7 @@ The file may contain `//` and `/* */` comments and trailing commas. Every step h
 By default the first failing step ends the run. Add `"continueOnError": true` to a step that is allowed to fail:
 
 ```json
-{ "name": "optional lookup refresh", "clone": [ "dbo.provider_extra" ], "continueOnError": true }
+{ "name": "optional lookup refresh", "clone": [ "dbo.product_extra" ], "continueOnError": true }
 ```
 
 If that step fails, the failure is logged and recorded and the run carries on with the next step. It works on every step type. Details:
@@ -253,15 +253,15 @@ Everything in the file is checked before anything is cloned or run: unknown keys
 
 The replacement is plain text, so write the quotes yourself where the value is a string (`WHERE Region = '${Region}'`). Parameter values are written to the summary file, so do not pass secrets this way.
 
-### One run per client
+### One run per parameter value
 
-The pipeline is designed for one run per client. Which rows are cloned is decided by `TableFilters` in the config file, and `${CustomerId}` is a pipeline parameter, so a run for one client looks like this:
+A pipeline can be run once for each value of a key, such as a customer ID. Which rows are cloned is decided by `TableFilters` in the config file, and `${CustomerId}` is a pipeline parameter, so a run for one customer looks like this:
 
 ```bash
-DataPuddle -f clients/1234.json -p CustomerId=1234 "" runs/1234
+DataPuddle -f jobs/1234.json -p CustomerId=1234 "" runs/1234
 ```
 
-where `clients/1234.json` holds that client's settings:
+where `jobs/1234.json` holds that run's settings:
 
 ```json
 {
@@ -274,11 +274,11 @@ where `clients/1234.json` holds that client's settings:
 }
 ```
 
-The output folder (the second positional argument) holds that client's database, exports and summary. To process several clients, start the program once per client with its own config file and output folder; the empty first argument keeps the connection string from the config (put it in a shared `appsettings.json` or an environment variable):
+The output folder (the second positional argument) holds that run's database, exports and summary. To process several values, start the program once per value with its own config file and output folder; the empty first argument keeps the connection string from the config (put it in a shared `appsettings.json` or an environment variable):
 
 ```bash
 for id in 1234 1487 1502; do
-  DataPuddle -f "clients/$id.json" -p CustomerId="$id" "" "runs/$id" || echo "client $id failed"
+  DataPuddle -f "jobs/$id.json" -p CustomerId="$id" "" "runs/$id" || echo "run $id failed"
 done
 ```
 
@@ -785,7 +785,7 @@ using (LocalStore store = new LocalStore(options)) {
     store.Log = Console.WriteLine;
     store.Open();
     store.CopyAll();                        // the configured Tables
-    store.Clone("dbo.client, dbo.provider"); // more tables on demand
+    store.Clone("dbo.region, dbo.product"); // more tables on demand
 
     store.Execute("CREATE TABLE stage.clean AS SELECT ... FROM dbo.invoices");
 
